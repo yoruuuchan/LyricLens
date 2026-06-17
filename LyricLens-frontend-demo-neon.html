@@ -1,0 +1,750 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LyricLens Frontend Demo</title>
+  <style>
+    :root {
+      --ll-bg: #070a12;
+      --ll-panel: rgba(9, 14, 28, 0.74);
+      --ll-panel-strong: rgba(12, 18, 34, 0.88);
+      --ll-line: rgba(255, 255, 255, 0.11);
+      --ll-line-soft: rgba(255, 255, 255, 0.07);
+      --ll-text: rgba(249, 252, 255, 0.94);
+      --ll-muted: rgba(223, 236, 255, 0.52);
+      --ll-dim: rgba(223, 236, 255, 0.30);
+      --ll-cyan: #6cecff;
+      --ll-mint: #8dffce;
+      --ll-violet: #b99cff;
+      --ll-rose: #ff8fd7;
+      --ll-shadow: 0 28px 80px rgba(0, 0, 0, 0.52);
+      --ll-font: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--ll-font);
+      color: var(--ll-text);
+      background:
+        radial-gradient(circle at 18% 12%, rgba(108, 236, 255, 0.22), transparent 28%),
+        radial-gradient(circle at 78% 18%, rgba(185, 156, 255, 0.22), transparent 25%),
+        radial-gradient(circle at 62% 88%, rgba(141, 255, 206, 0.13), transparent 34%),
+        linear-gradient(135deg, #05070d 0%, #0a0e1c 45%, #080a12 100%);
+      overflow: hidden;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.032) 1px, transparent 1px);
+      background-size: 42px 42px;
+      mask-image: radial-gradient(circle at center, black 0%, transparent 72%);
+      opacity: 0.55;
+    }
+
+    body::after {
+      content: "";
+      position: fixed;
+      inset: -40%;
+      pointer-events: none;
+      background: conic-gradient(from 180deg, transparent, rgba(108,236,255,0.09), transparent, rgba(255,143,215,0.07), transparent);
+      filter: blur(26px);
+      animation: ll-orbit 18s linear infinite;
+      opacity: 0.75;
+    }
+
+    @keyframes ll-orbit {
+      to { transform: rotate(360deg); }
+    }
+
+    .ll-stage {
+      position: relative;
+      z-index: 1;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 34px;
+    }
+
+    .ll-dock {
+      position: fixed;
+      top: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px;
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 999px;
+      background: rgba(6, 10, 20, 0.58);
+      box-shadow: 0 12px 36px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.06);
+      backdrop-filter: blur(22px);
+    }
+
+    .ll-dock button,
+    .ll-icon-button,
+    .ll-nav-button {
+      border: 0;
+      font: inherit;
+      color: inherit;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .ll-pill {
+      height: 32px;
+      padding: 0 14px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.045);
+      color: var(--ll-muted);
+      font-size: 13px;
+      letter-spacing: 0.02em;
+      transition: 160ms ease;
+    }
+
+    .ll-pill:hover { background: rgba(255,255,255,0.075); color: var(--ll-text); }
+
+    .ll-pill.is-active {
+      color: #021014;
+      background: linear-gradient(135deg, var(--ll-cyan), var(--ll-mint));
+      box-shadow: 0 0 26px rgba(108,236,255,0.26);
+    }
+
+    .ll-ghost-window {
+      position: absolute;
+      width: min(760px, calc(100vw - 56px));
+      height: 500px;
+      border-radius: 34px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: linear-gradient(145deg, rgba(255,255,255,0.035), rgba(255,255,255,0.015));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.07), 0 18px 70px rgba(0,0,0,0.40);
+      transform: translateY(18px) rotate(-1.2deg);
+      opacity: 0.45;
+    }
+
+    .ll-ghost-window::before {
+      content: "Now Playing · Cyberpunk: Edgerunners";
+      position: absolute;
+      left: 28px;
+      top: 22px;
+      color: rgba(255,255,255,0.22);
+      font-size: 13px;
+      letter-spacing: 0.04em;
+    }
+
+    .ll-ghost-lyric {
+      position: absolute;
+      left: 54px;
+      right: 54px;
+      bottom: 52px;
+      display: grid;
+      gap: 12px;
+      opacity: 0.7;
+    }
+
+    .ll-ghost-lyric span {
+      height: 14px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+    }
+
+    .ll-ghost-lyric span:nth-child(1) { width: 58%; }
+    .ll-ghost-lyric span:nth-child(2) { width: 74%; background: rgba(108,236,255,0.17); }
+    .ll-ghost-lyric span:nth-child(3) { width: 44%; }
+
+    .ll-panel {
+      position: relative;
+      z-index: 3;
+      width: 444px;
+      min-height: 314px;
+      border-radius: 26px;
+      overflow: hidden;
+      border: 1px solid transparent;
+      background:
+        linear-gradient(var(--ll-panel), var(--ll-panel-strong)) padding-box,
+        linear-gradient(135deg, rgba(108,236,255,0.55), rgba(185,156,255,0.24), rgba(141,255,206,0.35)) border-box;
+      box-shadow: var(--ll-shadow), inset 0 1px 0 rgba(255,255,255,0.08);
+      backdrop-filter: blur(28px) saturate(125%);
+      transition: width 260ms cubic-bezier(.2,.8,.2,1), min-height 260ms cubic-bezier(.2,.8,.2,1), border-radius 260ms ease;
+    }
+
+    .ll-panel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 12% 0%, rgba(108,236,255,0.18), transparent 34%),
+        linear-gradient(180deg, rgba(255,255,255,0.08), transparent 24%);
+      opacity: 0.9;
+    }
+
+    .ll-panel.is-minimized {
+      width: 58px;
+      min-height: 58px;
+      border-radius: 999px;
+    }
+
+    .ll-minibolt {
+      position: relative;
+      width: 58px;
+      height: 58px;
+      display: grid;
+      place-items: center;
+      color: #06141a;
+      background: radial-gradient(circle at 35% 25%, #fff, var(--ll-cyan) 38%, var(--ll-violet));
+      cursor: pointer;
+      font-size: 22px;
+      font-weight: 800;
+      text-shadow: 0 1px 0 rgba(255,255,255,0.3);
+    }
+
+    .ll-titlebar {
+      position: relative;
+      height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px 0 17px;
+      border-bottom: 1px solid var(--ll-line-soft);
+      user-select: none;
+      cursor: grab;
+    }
+
+    .ll-brand {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      min-width: 0;
+    }
+
+    .ll-logo {
+      width: 26px;
+      height: 26px;
+      border-radius: 9px;
+      display: grid;
+      place-items: center;
+      color: #041014;
+      font-weight: 900;
+      font-size: 15px;
+      background: linear-gradient(135deg, var(--ll-cyan), var(--ll-mint));
+      box-shadow: 0 0 24px rgba(108,236,255,0.36);
+    }
+
+    .ll-brand-text { display: flex; flex-direction: column; gap: 1px; }
+    .ll-name { font-size: 13px; font-weight: 730; letter-spacing: 0.05em; }
+    .ll-subtitle { font-size: 10px; color: var(--ll-dim); letter-spacing: 0.12em; text-transform: uppercase; }
+
+    .ll-actions { display: flex; gap: 4px; }
+    .ll-icon-button {
+      width: 30px;
+      height: 30px;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--ll-dim);
+      display: grid;
+      place-items: center;
+      transition: 150ms ease;
+    }
+    .ll-icon-button:hover { background: rgba(255,255,255,0.08); color: var(--ll-text); }
+    .ll-icon-button.close:hover { background: rgba(255,84,135,0.16); color: #ff9bbb; }
+
+    .ll-content {
+      position: relative;
+      padding: 17px 18px 13px;
+    }
+
+    .ll-current-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+      color: var(--ll-dim);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .ll-frequency {
+      display: flex;
+      align-items: end;
+      gap: 3px;
+      height: 16px;
+    }
+    .ll-frequency i {
+      display: block;
+      width: 3px;
+      border-radius: 4px;
+      background: linear-gradient(180deg, var(--ll-mint), var(--ll-cyan));
+      opacity: 0.8;
+      animation: ll-bars 900ms ease-in-out infinite alternate;
+    }
+    .ll-frequency i:nth-child(1) { height: 8px; animation-delay: 0ms; }
+    .ll-frequency i:nth-child(2) { height: 14px; animation-delay: 120ms; }
+    .ll-frequency i:nth-child(3) { height: 10px; animation-delay: 240ms; }
+    .ll-frequency i:nth-child(4) { height: 16px; animation-delay: 360ms; }
+    .ll-frequency i:nth-child(5) { height: 7px; animation-delay: 480ms; }
+
+    @keyframes ll-bars { to { transform: scaleY(0.45); opacity: 0.38; } }
+
+    .ll-line {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.46;
+      font-weight: 750;
+      letter-spacing: 0.005em;
+      color: var(--ll-text);
+      text-wrap: balance;
+    }
+
+    .ll-translation {
+      margin: 7px 0 15px;
+      color: var(--ll-muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .ll-highlight-list {
+      display: grid;
+      gap: 9px;
+      max-height: 210px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+
+    .ll-highlight-list::-webkit-scrollbar { width: 4px; }
+    .ll-highlight-list::-webkit-scrollbar-thumb { background: rgba(108,236,255,0.25); border-radius: 999px; }
+
+    .ll-highlight {
+      position: relative;
+      overflow: hidden;
+      border-radius: 18px;
+      padding: 12px 13px 11px 14px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: linear-gradient(135deg, rgba(255,255,255,0.075), rgba(255,255,255,0.032));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+    }
+
+    .ll-highlight::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 3px;
+      height: 100%;
+      background: linear-gradient(180deg, var(--ll-cyan), var(--ll-violet));
+    }
+
+    .ll-highlight-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 7px;
+      line-height: 1.45;
+      margin-left: 3px;
+    }
+
+    .ll-phrase {
+      color: var(--ll-cyan);
+      font-size: 14px;
+      font-weight: 760;
+      text-shadow: 0 0 18px rgba(108,236,255,0.18);
+    }
+    .ll-reading { color: rgba(185,156,255,0.78); font-size: 12px; }
+    .ll-arrow { color: rgba(255,255,255,0.32); font-size: 12px; }
+    .ll-meaning { color: rgba(244,250,255,0.82); font-size: 13px; }
+
+    .ll-note {
+      margin-top: 7px;
+      margin-left: 3px;
+      display: flex;
+      gap: 7px;
+      color: rgba(223,236,255,0.46);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .ll-note b { color: rgba(141,255,206,0.7); font-weight: 700; }
+
+    .ll-empty {
+      border: 1px dashed rgba(255,255,255,0.12);
+      border-radius: 18px;
+      padding: 18px 14px;
+      color: var(--ll-dim);
+      font-size: 12px;
+      text-align: center;
+      background: rgba(255,255,255,0.025);
+    }
+
+    .ll-bottom {
+      position: relative;
+      padding: 12px 18px 15px;
+      border-top: 1px solid var(--ll-line-soft);
+      display: grid;
+      grid-template-columns: 70px 1fr 48px;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .ll-nav { display: flex; gap: 6px; }
+    .ll-nav-button {
+      width: 30px;
+      height: 30px;
+      border-radius: 11px;
+      background: rgba(255,255,255,0.055);
+      color: var(--ll-muted);
+      border: 1px solid rgba(255,255,255,0.065);
+      transition: 150ms ease;
+    }
+    .ll-nav-button:hover:not(:disabled) { background: rgba(108,236,255,0.11); color: var(--ll-cyan); }
+    .ll-nav-button:disabled { opacity: 0.35; cursor: default; }
+
+    .ll-progress {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+    }
+
+    .ll-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.18);
+      transition: 220ms cubic-bezier(.2,.8,.2,1);
+      cursor: pointer;
+    }
+    .ll-dot.is-active {
+      width: 28px;
+      background: linear-gradient(90deg, var(--ll-cyan), var(--ll-violet));
+      box-shadow: 0 0 22px rgba(108,236,255,0.28);
+    }
+
+    .ll-counter {
+      text-align: right;
+      color: var(--ll-dim);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .ll-closed {
+      position: relative;
+      z-index: 2;
+      width: min(420px, calc(100vw - 48px));
+      border-radius: 24px;
+      padding: 26px;
+      border: 1px solid rgba(255,255,255,0.10);
+      background: rgba(8, 12, 24, 0.64);
+      backdrop-filter: blur(22px);
+      text-align: center;
+      color: var(--ll-muted);
+      box-shadow: var(--ll-shadow);
+    }
+
+    .ll-closed h1 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      color: var(--ll-text);
+    }
+
+    .ll-closed button {
+      margin-top: 16px;
+      height: 36px;
+      padding: 0 16px;
+      border-radius: 999px;
+      border: 0;
+      cursor: pointer;
+      color: #061014;
+      background: linear-gradient(135deg, var(--ll-cyan), var(--ll-mint));
+      font-weight: 720;
+    }
+
+    @media (max-width: 560px) {
+      .ll-stage { padding: 24px 14px; }
+      .ll-panel { width: min(444px, calc(100vw - 28px)); }
+      .ll-dock { top: 12px; width: calc(100vw - 24px); justify-content: center; }
+      .ll-pill { padding: 0 10px; }
+      .ll-ghost-window { width: calc(100vw - 22px); }
+    }
+  </style>
+</head>
+<body>
+  <div class="ll-stage">
+    <div class="ll-dock" aria-label="Demo controls">
+      <button class="ll-pill is-active" data-lang="en">English</button>
+      <button class="ll-pill" data-lang="ja">日本語</button>
+      <button class="ll-pill" id="autoplay">▶ 模拟播放</button>
+    </div>
+
+    <div class="ll-ghost-window" aria-hidden="true">
+      <div class="ll-ghost-lyric"><span></span><span></span><span></span></div>
+    </div>
+
+    <main id="app"></main>
+  </div>
+
+  <script>
+    const mockCards = [
+      {
+        index: 0,
+        line: "I really want to stay at your house",
+        translation: "我真的很想留在你家",
+        highlights: [
+          {
+            phrase: "stay at your house",
+            meaning: "留在你家（比 stay in 更口语，强调具体空间）",
+            pronunciation: "stay at 连读为 /steɪ.ət/",
+            context: "在亲密关系语境中，house 比 home 更具体、更私密"
+          }
+        ]
+      },
+      {
+        index: 1,
+        line: "And let yourself go",
+        translation: "然后放纵自己",
+        highlights: [
+          {
+            phrase: "let yourself go",
+            meaning: "放开自己、不再压抑；也有放弃自我管理的双关",
+            pronunciation: "let yourself 中 t 弱化，几乎吞掉",
+            context: "歌词里同时暗示解放和自我毁灭的双重含义"
+          }
+        ]
+      },
+      {
+        index: 2,
+        line: "You know you didn't lose your self-control",
+        translation: "你知道你并没有失去自控力",
+        highlights: [
+          {
+            phrase: "self-control",
+            meaning: "自我控制、自制力",
+            pronunciation: null,
+            context: "与上一句 let yourself go 形成反转——你以为自己失控了，其实没有"
+          },
+          {
+            phrase: "You know you didn't",
+            meaning: "你心里清楚你并没有",
+            pronunciation: "didn't 的 t 通常不发音，/dɪdn̩/",
+            context: null
+          }
+        ]
+      },
+      {
+        index: 3,
+        line: "Let me know when you change your mind",
+        translation: "等你改主意了告诉我",
+        highlights: [
+          {
+            phrase: "Let me know",
+            meaning: "告诉我、通知我（非常常用的口语表达）",
+            pronunciation: "Let me 口语中缩为 lemme /ˈlɛmi/",
+            context: null
+          },
+          {
+            phrase: "change your mind",
+            meaning: "改变想法、改变主意",
+            pronunciation: null,
+            context: "固定搭配，日常对话高频"
+          }
+        ]
+      },
+      {
+        index: 4,
+        line: "You know you didn't lose your self-control",
+        translation: "你知道你并没有失去自控力",
+        highlights: []
+      }
+    ];
+
+    const mockJaCards = [
+      {
+        index: 0,
+        line: "劣等感しか愛せなくなってる世界",
+        translation: "变得只爱自卑感的世界",
+        highlights: [
+          { phrase: "劣等感", reading: "れっとうかん", meaning: "自卑感、劣等感", grammar: null, context: "心理学用语，日常也常用" },
+          { phrase: "〜しか…ない", reading: null, meaning: "只有…、仅仅…（限定表达）", grammar: "しか + 否定形：表示排他性限定", context: null },
+          { phrase: "なくなってる", reading: null, meaning: "变得不再…（进行中的状态变化）", grammar: "なくなる + ている 的口语缩约形 てる", context: "歌词中常用缩约形" }
+        ]
+      },
+      {
+        index: 1,
+        line: "そうやって目を閉じて",
+        translation: "就这样闭上眼睛",
+        highlights: [
+          { phrase: "そうやって", reading: null, meaning: "就那样地、以那种方式", grammar: "そう + やる 的て形，表示方式", context: null },
+          { phrase: "目を閉じて", reading: "めをとじて", meaning: "闭上眼睛", grammar: "目を閉じる 的て形，表示动作连续", context: null }
+        ]
+      }
+    ];
+
+    const state = {
+      lang: "en",
+      index: 0,
+      minimized: false,
+      visible: true,
+      autoplay: false,
+      timer: null
+    };
+
+    const app = document.getElementById("app");
+    const autoplayButton = document.getElementById("autoplay");
+
+    function cards() {
+      return state.lang === "en" ? mockCards : mockJaCards;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function note(label, text) {
+      if (!text) return "";
+      return `<div class="ll-note"><b>${label}</b><span>${escapeHtml(text)}</span></div>`;
+    }
+
+    function highlight(h) {
+      const isJa = state.lang === "ja";
+      return `
+        <section class="ll-highlight">
+          <div class="ll-highlight-head">
+            <span class="ll-phrase">${escapeHtml(h.phrase)}</span>
+            ${isJa && h.reading ? `<span class="ll-reading">${escapeHtml(h.reading)}</span>` : ""}
+            <span class="ll-arrow">→</span>
+            <span class="ll-meaning">${escapeHtml(h.meaning)}</span>
+          </div>
+          ${note(isJa ? "文法" : "发音", isJa ? h.grammar : h.pronunciation)}
+          ${note("语境", h.context)}
+        </section>
+      `;
+    }
+
+    function render() {
+      const data = cards();
+      const card = data[state.index];
+
+      if (!state.visible) {
+        app.innerHTML = `
+          <section class="ll-closed">
+            <h1>LyricLens 已关闭</h1>
+            <div>当前歌曲不再显示；下一首重新判断。Demo 里可以手动恢复。</div>
+            <button id="restore">恢复浮层</button>
+          </section>
+        `;
+        document.getElementById("restore").onclick = () => { state.visible = true; render(); };
+        return;
+      }
+
+      if (state.minimized) {
+        app.innerHTML = `
+          <section class="ll-panel is-minimized">
+            <div class="ll-minibolt" id="restore-mini">⌁</div>
+          </section>
+        `;
+        document.getElementById("restore-mini").onclick = () => { state.minimized = false; render(); };
+        return;
+      }
+
+      app.innerHTML = `
+        <section class="ll-panel">
+          <div class="ll-titlebar">
+            <div class="ll-brand">
+              <div class="ll-logo">L</div>
+              <div class="ll-brand-text">
+                <div class="ll-name">LyricLens</div>
+                <div class="ll-subtitle">${state.lang === "en" ? "English Study Card" : "Japanese Study Card"}</div>
+              </div>
+            </div>
+            <div class="ll-actions">
+              <button class="ll-icon-button" id="minimize" aria-label="minimize">─</button>
+              <button class="ll-icon-button close" id="close" aria-label="close">✕</button>
+            </div>
+          </div>
+
+          <div class="ll-content">
+            <div class="ll-current-meta">
+              <span>Line ${String(card.index).padStart(2, "0")}</span>
+              <span class="ll-frequency"><i></i><i></i><i></i><i></i><i></i></span>
+            </div>
+            <h2 class="ll-line">${escapeHtml(card.line)}</h2>
+            <div class="ll-translation">${escapeHtml(card.translation)}</div>
+            <div class="ll-highlight-list">
+              ${card.highlights.length ? card.highlights.map(highlight).join("") : `<div class="ll-empty">这一行没有需要特别学习的表达</div>`}
+            </div>
+          </div>
+
+          <footer class="ll-bottom">
+            <div class="ll-nav">
+              <button class="ll-nav-button" id="prev" ${state.index === 0 ? "disabled" : ""}>‹</button>
+              <button class="ll-nav-button" id="next" ${state.index === data.length - 1 ? "disabled" : ""}>›</button>
+            </div>
+            <div class="ll-progress">
+              ${data.map((_, i) => `<span class="ll-dot ${i === state.index ? "is-active" : ""}" data-index="${i}"></span>`).join("")}
+            </div>
+            <div class="ll-counter">${state.index + 1} / ${data.length}</div>
+          </footer>
+        </section>
+      `;
+
+      document.getElementById("minimize").onclick = () => { state.minimized = true; render(); };
+      document.getElementById("close").onclick = () => { state.visible = false; render(); };
+      document.getElementById("prev").onclick = () => { state.index = Math.max(0, state.index - 1); render(); };
+      document.getElementById("next").onclick = () => { state.index = Math.min(data.length - 1, state.index + 1); render(); };
+      document.querySelectorAll(".ll-dot").forEach(dot => {
+        dot.onclick = () => { state.index = Number(dot.dataset.index); render(); };
+      });
+    }
+
+    function updateDock() {
+      document.querySelectorAll(".ll-pill[data-lang]").forEach(button => {
+        button.classList.toggle("is-active", button.dataset.lang === state.lang);
+      });
+      autoplayButton.textContent = state.autoplay ? "⏸ 暂停" : "▶ 模拟播放";
+      autoplayButton.classList.toggle("is-active", state.autoplay);
+    }
+
+    function setAutoplay(enabled) {
+      state.autoplay = enabled;
+      clearInterval(state.timer);
+      if (enabled) {
+        state.timer = setInterval(() => {
+          const data = cards();
+          state.index = (state.index + 1) % data.length;
+          render();
+        }, 2800);
+      }
+      updateDock();
+    }
+
+    document.querySelectorAll(".ll-pill[data-lang]").forEach(button => {
+      button.onclick = () => {
+        state.lang = button.dataset.lang;
+        state.index = 0;
+        updateDock();
+        render();
+      };
+    });
+
+    autoplayButton.onclick = () => setAutoplay(!state.autoplay);
+
+    updateDock();
+    render();
+  </script>
+</body>
+</html>
