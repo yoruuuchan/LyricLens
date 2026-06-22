@@ -1,0 +1,2148 @@
+(function initLyricLensMain(root) {
+  "use strict";
+
+  const LL = root.LyricLens || {};
+  const { Utils, Lyrics, Detect, Api, Cache, Sync, Settings, Panel, Diagnostics, Styles, Capture, Bridge } = LL;
+  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  let settings = Settings.DEFAULT_SETTINGS;
+  let diagnostics = null;
+  let panel = null;
+  let bridge = null;
+  let currentSongId = null;
+  let suppressedSongId = null;
+  let currentAnalysis = null;
+  let activeController = null;
+  let activeRequestId = 0;
+  let lastProgressMs = 0;
+  let lastLineIndex = null;
+  let lastLyricsHash = null;
+  let lastAnalyzedKey = null;
+  let inFlightAnalyzeKey = null;
+  let currentAnalyzeKey = null;
+  let displayedAnalyzeKey = null;
+  let currentCardOrdinal = 0;
+  let lastSettledAnalyzeKey = null;
+  let lastSettledAnalyzeStatus = null;
+  let lastSettledAt = 0;
+  let watchdogTimer = null;
+  let playbackSyncTimer = null;
+  let playbackBaseWallClock = 0;
+  let playbackBaseMs = 0;
+  let playbackHasRealTime = false;
+  let lastProgressEventAt = 0;
+  let playbackPaused = false;
+  let autoFollowSuppressTimer = null;
+  let domObserver = null;
+  let analysisPlaybackState = null;
+  let previousSongLyricsSignature = null;
+  let songChangeAt = 0;
+  let lastProgressRawTrackMarker = null;
+  const PREVIOUS_SONG_LYRICS_REJECT_MS = 8000;
+
+  function buildLyricsTextSignature(lines) {
+    if (!Array.isArray(lines) || !lines.length) return null;
+    const texts = [];
+    for (const line of lines) {
+      const raw = String(line?.text ?? line?.original ?? "").trim();
+      if (!raw) continue;
+      // strip parenthesized translations / whitespace noise so amll-state
+      // (which may inline a translation) and dom-lyrics produce the same key
+      const stripped = raw
+        .replace(/[（(][^）)]*[）)]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (stripped) texts.push(stripped);
+      if (texts.length >= 30) break;
+    }
+    if (!texts.length) return null;
+    return `${texts.length}|${texts.join("\n")}`;
+  }
+  const AUTO_FOLLOW_SUPPRESS_MS = 3000;
+  let lastPromotedConsoleSongId = null;
+  const RUNTIME_CAPTURE_DEBOUNCE_MS = 600;
+  const PLAYBACK_SYNC_INTERVAL_MS = 150;
+  const PER_LINE_BATCH_SIZE = 5;
+  const PER_LINE_BATCH_CONCURRENCY = 6;
+  const TERMINAL_STATUSES = new Set(["success", "timeout", "error", "parse-error", "no-cards", "rate-limited"]);
+  const FAILED_SETTLED_STATUSES = new Set(["timeout", "error", "parse-error", "no-cards", "rate-limited"]);
+  let lyricsFingerprintToCanonicalKey = new Map();
+  let keyAliasMap = new Map();
+  let canonicalToProvisionalKeys = new Map();
+
+  async function bootstrap() {
+    if (!Utils || !Lyrics || !Detect || !Api || !Cache || !Sync || !Settings || !Panel || !Diagnostics || !Styles || !Capture) {
+      console.error("[LyricLens]", "模块加载不完整，插件停止启动");
+      return;
+    }
+
+    Utils.log("插件加载成功");
+    try {
+      Lyrics.installRuntimeLyricsCapture?.();
+    } catch (err) {
+      Utils.warn("installRuntimeLyricsCapture 失败", err);
+    }
+    diagnostics = Diagnostics.createDiagnostics(root);
+    LL.diagnostics = diagnostics;
+    if (diagnostics.enabled()) diagnostics.probeRuntime();
+    Utils.injectInlineStyle("ll-panel-style", Styles.PANEL_CSS, diagnostics);
+    settings = Settings.normalizeSettings(await Settings.readSettings());
+    panel = Panel.createPanel({
+      settings,
+      isDebugEnabled: () => diagnostics?.enabled?.() === true,
+      getDiagnosticState: () => diagnostics?.getState?.(),
+      onSettingsSave: handleSettingsSave,
+      onRetry: retryCurrentSong,
+      onCloseCurrentSong: closeCurrentSong,
+      onRestoreCurrentSong: restoreCurrentSong,
+      onManualNavigation: handleManualNavigation,
+      onAutoFollowChanged: handleAutoFollowChanged,
+      onPopOutToggle: handlePopOutToggle,
+      onStateChange: handlePanelStateChange
+    });
+    if (diagnostics.enabled()) panel.mountDebugPanel();
+
+    if (Bridge?.createBridge) {
+      bridge = Bridge.createBridge({
+        port: Bridge.DEFAULT_PORT,
+        clientVersion: "0.1.0",
+        getSnapshot: buildBridgeSnapshot,
+        onStatusChange: (status) => {
+          panel?.setBridgeStatus?.(status);
+          diagnostics?.updateState?.({ bridgeStatus: status });
+        },
+        onCommand: handleBridgeCommand,
+        logger: (...args) => {
+          if (diagnostics?.enabled?.()) {
+            try { console.log("[LyricLens:bridge]", ...args); } catch (_) {}
+          }
+        }
+      });
+      LL.bridge = bridge;
+    }
+
+    installLyricsWrapperProbe();
+
+    // Set up DOM lyrics observer (runs continuously in background)
+    try {
+      domObserver = Capture.createDomLyricsObserver?.(root, (payload) => {
+        if (payload && payload.lines && payload.lines.length) {
+          handleCapturePayload(payload);
+        }
+      });
+      if (domObserver?.start) domObserver.start();
+      diagnostics?.updateState?.({ captureStatus: "source-ready" });
+    } catch (err) {
+      Utils.warn("DOM lyrics observer 初始化失败", err);
+    }
+
+    // Register for console capture events (fallback source)
+    try {
+      Lyrics.onRuntimeLyricsCaptured?.(handleRuntimeLyricsCapturedDebounced);
+    } catch (err) {
+      Utils.warn("onRuntimeLyricsCaptured 注册失败", err);
+    }
+    Sync.startProgressListener(handleProgress, diagnostics);
+    Sync.startSongMonitor(handleSongChange, handlePlayState, diagnostics);
+  }
+
+  const handleRuntimeLyricsCapturedDebounced = Utils.debounce((detail) => {
+    handleCaptureFromConsole(detail);
+  }, RUNTIME_CAPTURE_DEBOUNCE_MS);
+
+  function handleCaptureFromConsole(detail) {
+    if (!detail || !Array.isArray(detail.payload) || !detail.payload.length) return;
+
+    // Use capture pipeline: console source already has the payload, pass it through
+    const payload = Capture.readConsoleCapturedLyrics?.(root);
+    if (payload && payload.lines.length) {
+      handleCapturePayload(payload);
+    }
+  }
+
+  function handleCapturePayload(payload) {
+    if (!payload || !Array.isArray(payload.lines) || !payload.lines.length) return;
+    const source = payload.source || "unknown";
+    const songId = currentSongId || diagnostics?.getState?.()?.songId || payload.songId || null;
+
+    if (songId && suppressedSongId === songId) {
+      diagnostics?.updateState?.({ analysisSkippedReason: "suppressed" });
+      return;
+    }
+
+    // ── Arbitration: low-quality DOM must not override active capture ──
+    const currentState = diagnostics?.getState?.() || {};
+    const newScore = Capture.computeCaptureScore?.(payload) || 0;
+    const activeScore = currentState.activeCaptureScore || 0;
+
+    // Only apply strict gating to DOM source (lowest confidence)
+    if (source === "dom-lyrics") {
+      const hasActiveCapture =
+        currentState.captureStatus === "captured-valid-lines" ||
+        currentState.captureStatus === "using-cache";
+      const isAnalyzing =
+        currentState.analyzeTriggerStatus === "running" ||
+        currentState.analyzeTriggerStatus === "success" ||
+        currentState.apiStatus === "requesting" ||
+        currentState.apiStatus === "success" ||
+        currentState.apiStatus === "cache-hit" ||
+        Boolean(currentState.inFlightAnalyzeKey);
+
+      if (!Capture.hasCompleteLineTiming?.(payload)) {
+        diagnostics?.updateState?.({
+          skippedCaptureReason: hasActiveCapture || isAnalyzing
+            ? "dom-outranked-by-active-capture"
+            : "dom-source-missing-timing",
+          domLyricsRejectedReason: "dom-source-missing-timing",
+          analyzeTriggerStatus: hasActiveCapture || isAnalyzing
+            ? currentState.analyzeTriggerStatus
+            : "blocked-no-timed-lyrics",
+          analyzeTriggerBlockedReason: hasActiveCapture || isAnalyzing
+            ? currentState.analyzeTriggerBlockedReason || null
+            : "dom-source-missing-timing",
+          lastSkippedCaptureSample: Array.isArray(payload.lines)
+            ? payload.lines.slice(0, 2).map((l) => (l.original || "").slice(0, 60))
+            : null
+        });
+        return;
+      }
+
+      // DOM must not replace a better or equal active source
+      if (isAnalyzing && newScore <= activeScore + 20) {
+        const skipCount = (currentState.skippedDuplicateAnalyzeCount || 0) + 1;
+        diagnostics?.updateState?.({
+          skippedCaptureReason: "dom-outranked-by-active-capture",
+          skippedDuplicateAnalyzeCount: skipCount,
+          lastSkippedCaptureSample: Array.isArray(payload.lines)
+            ? payload.lines.slice(0, 2).map((l) => (l.original || "").slice(0, 60))
+            : null
+        });
+        return;
+      }
+      if (hasActiveCapture && !isAnalyzing && newScore <= activeScore + 10) {
+        const skipCount = (currentState.skippedDuplicateAnalyzeCount || 0) + 1;
+        diagnostics?.updateState?.({
+          skippedCaptureReason: "dom-outranked-by-active-capture",
+          skippedDuplicateAnalyzeCount: skipCount,
+          lastSkippedCaptureSample: Array.isArray(payload.lines)
+            ? payload.lines.slice(0, 2).map((l) => (l.original || "").slice(0, 60))
+            : null
+        });
+        return;
+      }
+    }
+
+    // For console / amll-state: let analyzeSong handle dedup internally
+    // For DOM with sufficient quality: proceed
+
+    // ── Build capture options for analyze ──
+    const capturePayload = payload.lines.map((l) => ({
+      index: l.lineIndex,
+      text: l.original,
+      startTime: l.startMs,
+      endTime: l.endMs,
+      referenceTranslation: l.translation || undefined,
+      romanLyric: l.romanLyric || undefined
+    }));
+    const fingerprint = Lyrics.fingerprintCapturedLyrics?.(capturePayload);
+
+    diagnostics?.updateState?.({
+      captureStatus: "captured-valid-lines",
+      captureSource: source,
+      analyzeTriggerStatus: "pending",
+      lastCapturedAt: payload.capturedAt || Date.now(),
+      lastCaptureSource: source,
+      lyricLineCount: payload.lines.length,
+      analyzeTriggerBlockedReason: null,
+      activeCaptureSource: source,
+      activeCaptureLineCount: payload.lines.length,
+      activeCaptureScore: newScore,
+      captureConfidence: payload.confidence || null,
+      lastCaptureSample: Array.isArray(payload.lines)
+        ? payload.lines.slice(0, 3).map((l) => (l.original || "").slice(0, 60))
+        : null
+    });
+
+    analyzeSong(songId, {
+      forceRefresh: false,
+      capturePayload,
+      captureSource: source,
+      captureFingerprint: fingerprint,
+      trigger: "capture-pipeline"
+    });
+  }
+
+  // Legacy: keep for backward compat
+  function triggerAnalyzeFromRuntimeCapture(detail) {
+    if (!detail || !Array.isArray(detail.payload) || !detail.payload.length) return;
+
+    // Try to extract a console songId candidate from the captured payload source
+    // (e.g. AMLL console args like "1893590234_XIAY0O")
+    let consoleSongId = null;
+    if (detail.source && typeof detail.source === "string") {
+      consoleSongId = Sync.extractSongIdFromConsoleString?.(detail.source);
+    }
+    if (!consoleSongId && detail.payload) {
+      // Also try the first few payload items for embedded IDs
+      consoleSongId = Sync.extractSongIdFromConsoleArgs?.(detail.payload);
+    }
+    if (consoleSongId && diagnostics?.enabled?.()) {
+      console.log("[LyricLens:songid]", "console candidate", consoleSongId, "source", detail.source);
+    }
+    if (consoleSongId) {
+      diagnostics?.updateState?.({
+        lastConsoleSongIdCandidate: consoleSongId,
+        lastConsoleSongIdAt: Date.now(),
+        consoleSongIdExtractStrategy: "capture-payload"
+      });
+      // Try to promote existing captured:* key to songId-based key
+      tryPromoteCapturedKeyFromConsoleSongId(consoleSongId, detail.fingerprint);
+    }
+
+    const songId = currentSongId || diagnostics?.getState?.()?.songId || consoleSongId || null;
+    diagnostics?.updateState?.({
+      lastCaptureSource: detail.source || null,
+      lastCapturedAt: detail.capturedAt || Date.now(),
+      lastAutoAnalyzeAt: Date.now()
+    });
+    if (songId && suppressedSongId === songId) {
+      diagnostics?.updateState?.({ analysisSkippedReason: "suppressed" });
+      return;
+    }
+    analyzeSong(songId, {
+      forceRefresh: false,
+      capturePayload: detail.payload,
+      captureSource: detail.source,
+      captureFingerprint: detail.fingerprint,
+      trigger: "runtime-capture"
+    });
+  }
+
+  function installLyricsWrapperProbe() {
+    let attempts = 0;
+    const tryWrap = () => {
+      attempts += 1;
+      const wrapped = Lyrics.wrapOnProcessLyrics();
+      if (wrapped || attempts >= 10) clearInterval(timer);
+    };
+    const timer = setInterval(tryWrap, 1000);
+    tryWrap();
+  }
+
+  // ── PlayState handler (pause / resume / stop) ──
+
+  function handlePlayState(parsed) {
+    if (!parsed) return;
+    const diagPartial = {
+      lastPlayStateStatus: parsed.playbackStatus,
+      lastPlayStateAt: Date.now(),
+      lastPlayStateArgsSummary: parsed.playStateArgsSummary || null,
+      rawSongIdCandidate: parsed.rawSongIdCandidate ?? null,
+      lastRawSongIdCandidate: parsed.rawSongIdCandidate ?? null,
+      lastExtractedSongId: parsed.songId ?? null,
+      lastSongIdExtractStrategy: parsed.songIdExtractStrategy || null
+    };
+    // Track track- → numeric normalization
+    if (parsed.normalizedTrackIdFrom && parsed.normalizedTrackIdTo) {
+      const state = diagnostics?.getState?.() || {};
+      diagPartial.normalizedTrackIdCount = (state.normalizedTrackIdCount || 0) + 1;
+      diagPartial.lastNormalizedTrackIdFrom = parsed.normalizedTrackIdFrom;
+      diagPartial.lastNormalizedTrackIdTo = parsed.normalizedTrackIdTo;
+    }
+    diagnostics?.updateState?.(diagPartial);
+    switch (parsed.playbackStatus) {
+      case "pause":
+        playbackPaused = true;
+        diagnostics?.updateState?.({ playbackSyncStatus: "paused", playbackPaused: true });
+        break;
+      case "resume":
+      case "play":
+        playbackPaused = false;
+        playbackBaseWallClock = 0;
+        playbackBaseMs = Number.isFinite(lastProgressMs) ? lastProgressMs : 0;
+        diagnostics?.updateState?.({ playbackSyncStatus: "running", playbackPaused: false });
+        break;
+      case "stop":
+        playbackPaused = true;
+        playbackBaseMs = 0;
+        diagnostics?.updateState?.({ playbackSyncStatus: "stopped", playbackPaused: true });
+        break;
+      default:
+        break;
+    }
+  }
+
+  // ── Auto-follow coordination ──
+
+  function handleManualNavigation({ index, ordinal }) {
+    clearAutoFollowSuppressTimer();
+    if (panel?.setAutoFollow) panel.setAutoFollow(false);
+    autoFollowSuppressTimer = setTimeout(() => {
+      autoFollowSuppressTimer = null;
+      if (panel?.setAutoFollow) panel.setAutoFollow(true);
+      diagnostics?.updateState?.({
+        autoFollowSuppressedUntil: null,
+        autoFollowRestoreReason: "timer-expired"
+      });
+    }, AUTO_FOLLOW_SUPPRESS_MS);
+    const suppressedUntil = Date.now() + AUTO_FOLLOW_SUPPRESS_MS;
+    diagnostics?.updateState?.({
+      autoFollowSuppressedUntil: suppressedUntil,
+      lastManualNavigationAt: Date.now(),
+      autoFollowRestoreReason: null
+    });
+  }
+
+  function handleAutoFollowChanged(value) {
+    if (value === true) {
+      clearAutoFollowSuppressTimer();
+      diagnostics?.updateState?.({
+        autoFollowSuppressedUntil: null,
+        autoFollowRestoreReason: "manual-toggle"
+      });
+    }
+    if (value === false && autoFollowSuppressTimer) {
+      // User manually turned off while timer is running — respect it, don't restart timer
+      diagnostics?.updateState?.({
+        autoFollowSuppressedUntil: null,
+        autoFollowRestoreReason: "manual-off"
+      });
+    }
+  }
+
+  function clearAutoFollowSuppressTimer() {
+    if (autoFollowSuppressTimer) {
+      clearTimeout(autoFollowSuppressTimer);
+      autoFollowSuppressTimer = null;
+    }
+  }
+
+  // ── Bridge (desktop companion) ──
+
+  function buildBridgeSnapshot() {
+    if (!Bridge?.buildSnapshot) return null;
+    const snap = panel?.getPanelSnapshot?.();
+    if (!snap) return null;
+    return Bridge.buildSnapshot({
+      panelState: snap.panelState,
+      settings: snap.settings,
+      mode: snap.mode,
+      loadingMessage: snap.mode === "loading" ? snap.message : null,
+      errorMessage: snap.mode === "error" ? snap.message : null,
+      language: snap.language,
+      song: snap.songId ? { id: String(snap.songId) } : null,
+      playbackMs: Number.isFinite(lastProgressMs) ? lastProgressMs : null
+    });
+  }
+
+  function handlePanelStateChange() {
+    bridge?.publish?.("panel-change");
+  }
+
+  function handlePopOutToggle(value) {
+    if (value) {
+      panel?.setPoppedOut?.(true);
+      tryLaunchCompanion();
+      bridge?.popOut?.();
+    } else {
+      bridge?.popIn?.();
+      panel?.setPoppedOut?.(false);
+    }
+  }
+
+  function tryLaunchCompanion() {
+    const path = String(settings.companionExePath || "").trim();
+    if (!path) return;
+    const exec = root.betterncm?.app?.exec;
+    if (typeof exec !== "function") return;
+    // Wrap in `start ""` so betterncm.app.exec returns without waiting; the
+    // empty quoted string is the window title (not the path).
+    const cmd = `cmd /c start "" "${path}"`;
+    try {
+      const result = exec(cmd, false, false);
+      if (result && typeof result.catch === "function") {
+        result.catch((err) => Utils.warn("companion exec rejected", err));
+      }
+      diagnostics?.updateState?.({ companionLaunchAttemptedAt: Date.now() });
+    } catch (err) {
+      Utils.warn("companion exec threw", err);
+    }
+  }
+
+  function handleBridgeCommand(name, payload) {
+    switch (name) {
+      case "next":
+        panel?.nextCard?.();
+        break;
+      case "prev":
+        panel?.prevCard?.();
+        break;
+      case "toggleAutoFollow":
+        if (panel?.setAutoFollow && panel?.getAutoFollow) {
+          panel.setAutoFollow(!panel.getAutoFollow());
+        }
+        break;
+      case "closeCurrentSong":
+        closeCurrentSong(currentSongId);
+        break;
+      case "retry":
+        retryCurrentSong(currentSongId);
+        break;
+      case "popIn":
+        handlePopOutToggle(false);
+        break;
+      case "updateSettings":
+        if (payload && typeof payload === "object") {
+          handleSettingsSave(payload);
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
+  // ── Cache fallback diagnostics ──
+
+  function recordCacheFallbackNotUsed(cacheResult) {
+    if (!cacheResult?.cacheKey) return;
+    Utils.log("缓存命中但不作为当前捕获结果", cacheResult.cacheKey);
+    diagnostics?.updateState?.({
+      cacheHit: true,
+      cacheKey: cacheResult.cacheKey,
+      cacheUseStatus: "diagnostic-only",
+      analysisSkippedReason: "cache-hit-not-used",
+      analyzeTriggerBlockedReason: "cache-hit-not-used"
+    });
+  }
+
+  // ── Periodic console songId promotion check ──
+
+  function checkConsoleSongIdPromotion() {
+    let candidateId = null;
+    try { candidateId = root.__LL_CONSOLE_SONG_ID_CANDIDATE; } catch (_) {}
+    if (!candidateId || candidateId === lastPromotedConsoleSongId) return;
+
+    const currentLyrics = Lyrics.getLastCapturedLyrics?.();
+    if (!currentLyrics || !currentLyrics.length) return;
+    const fingerprint = Lyrics.fingerprintCapturedLyrics?.(currentLyrics);
+    if (!fingerprint) return;
+
+    lastPromotedConsoleSongId = candidateId;
+    tryPromoteCapturedKeyFromConsoleSongId(candidateId, fingerprint);
+  }
+
+  // ── Console songId → canonical promotion ──
+
+  function tryPromoteCapturedKeyFromConsoleSongId(candidateId, fingerprint) {
+    if (!candidateId || !fingerprint) return;
+    const existingCanonical = lyricsFingerprintToCanonicalKey.get(fingerprint);
+    if (!existingCanonical || typeof existingCanonical !== "string") return;
+    if (!existingCanonical.startsWith("captured:")) return;
+
+    // Compute what the songId-based key would be
+    const currentLyrics = Lyrics.getLastCapturedLyrics?.();
+    if (!currentLyrics || !currentLyrics.length) return;
+    const lyricsHash = Lyrics.lyricsHash(Lyrics.preprocessLyricLines(currentLyrics));
+    const newRawKey = Cache.buildCacheKey({
+      songId: candidateId,
+      lyricsHash,
+      apiEndpoint: settings.apiEndpoint,
+      modelName: settings.modelName,
+      promptVersion: Api.PROMPT_VERSION
+    });
+
+    // Only promote if the captured key is the currently settled one (cards exist)
+    if (lastSettledAnalyzeKey === existingCanonical && lastSettledAnalyzeStatus === "success") {
+      promoteCanonicalKey(fingerprint, newRawKey);
+      diagnostics?.updateState?.({
+        keyAliasReason: "captured-key-promoted-from-console-song-id"
+      });
+      if (diagnostics?.enabled?.()) {
+        console.log("[LyricLens:songid]", "promoted captured key from console candidate", {
+          from: existingCanonical,
+          to: newRawKey,
+          candidate: candidateId
+        });
+      }
+    }
+  }
+
+  async function handleSettingsSave(nextSettings) {
+    const previousSettings = settings;
+    const mergedSettings = Settings.normalizeSettings({ ...settings, ...nextSettings });
+    const analysisKeys = [
+      "apiEndpoint", "apiKey", "modelName", "autoAnalyze", "analyzeTimeoutMs",
+      "maxAnalysisLines", "analyzeMaxTokens", "analyzeTemperature", "fallbackOnTimeout",
+      "fallbackMaxLines", "fallbackMaxTokens", "fallbackTimeoutMs", "cardGenerationMode",
+      "responseFormatMode", "modelThinkingMode"
+    ];
+    const analysisSettingsChanged = analysisKeys.some((key) => previousSettings?.[key] !== mergedSettings[key]);
+    settings = await Settings.writeSettings(mergedSettings);
+    panel?.setSettings(settings);
+    diagnostics?.updateState?.({
+      lastError: null,
+      settingsChangeAnalyzeTriggered: analysisSettingsChanged && settings.autoAnalyze === true
+    });
+    if (analysisSettingsChanged && settings.autoAnalyze === true && currentSongId && !suppressedSongId) {
+      retryCurrentSong(currentSongId);
+    }
+    return settings;
+  }
+
+  function closeCurrentSong(songId) {
+    suppressedSongId = songId || currentSongId;
+    abortActiveRequest({ reason: "close-song" });
+    Utils.log("当前歌曲浮层已关闭", suppressedSongId);
+  }
+
+  function restoreCurrentSong(songId) {
+    const target = songId || currentSongId;
+    if (!target) return;
+    const wasSuppressed = suppressedSongId === target;
+    if (wasSuppressed) suppressedSongId = null;
+    Utils.log("当前歌曲浮层已恢复", { songId: target, wasSuppressed });
+    if (wasSuppressed && currentSongId === target) {
+      // X muted analysis; restore should re-trigger it.
+      analyzeSong(target, { forceRefresh: false, trigger: "restore" });
+    }
+  }
+
+  function abortActiveRequest(options = {}) {
+    const { silentDiagnostics = false, reason = null } = options;
+    const abortedKey = inFlightAnalyzeKey;
+    if (activeController) {
+      try {
+        activeController.abort();
+      } catch (_) {}
+    }
+    if (!silentDiagnostics && abortedKey) {
+      diagnostics?.updateState?.({
+        apiStatus: "aborted",
+        inFlightAnalyzeKey: null,
+        abortReason: reason || "new-request",
+        abortedAnalyzeKey: abortedKey
+      });
+    } else if (silentDiagnostics) {
+      diagnostics?.updateState?.({ inFlightAnalyzeKey: null });
+    }
+    activeController = null;
+    inFlightAnalyzeKey = null;
+    activeRequestId += 1;
+  }
+
+  function handleSongChange(songId) {
+    if (!songId) return;
+    if (currentSongId !== songId) {
+      // Snapshot the previous song's lyrics text signature so we can reject
+      // stale captures (amll-state / console may hold prior song's lyrics
+      // for a few hundred ms after the songId flips). We use a text-only
+      // signature so format differences between sources (inline translation,
+      // whitespace, etc.) don't let stale lyrics slip through.
+      previousSongLyricsSignature = buildLyricsTextSignature(currentAnalysis?.lines) || null;
+      songChangeAt = Date.now();
+      console.log("[LyricLens:song-change]", { from: currentSongId, to: songId, hasPrevSig: Boolean(previousSongLyricsSignature) });
+      suppressedSongId = null;
+      currentAnalysis = null;
+      lastLineIndex = null;
+      currentAnalyzeKey = null;
+      displayedAnalyzeKey = null;
+      currentCardOrdinal = 0;
+      lastSettledAnalyzeKey = null;
+      lastSettledAnalyzeStatus = null;
+      lastSettledAt = 0;
+      lyricsFingerprintToCanonicalKey.clear();
+      Lyrics.clearCapturedLyrics?.();
+      try {
+        root.__LL_CONSOLE_SONG_ID_CANDIDATE = null;
+        root.__LL_CONSOLE_SONG_ID_CANDIDATE_AT = 0;
+      } catch (_) {}
+      keyAliasMap.clear();
+      canonicalToProvisionalKeys.clear();
+      clearWatchdog();
+      stopPlaybackSyncLoop();
+      clearAutoFollowSuppressTimer();
+      lastPromotedConsoleSongId = null;
+      // Cleanup and restart DOM observer for new song
+      if (domObserver?.cleanup) { domObserver.cleanup(); domObserver = null; }
+      abortActiveRequest({ reason: "song-change" });
+      // Restart DOM observer without seeding from current DOM. Reasoning:
+      // when NCM updates the lyrics DOM faster than the amll-state mutable
+      // global (which happens on a re-play of a recently played song),
+      // seeding with current DOM means the observer's baseline equals the
+      // NEW song's lyrics and it never fires again. Letting the first
+      // extract deliver unconditionally is safe — stale captures will be
+      // filtered by the previousSongLyricsSignature reject in analyzeSong.
+      try {
+        domObserver = Capture.createDomLyricsObserver?.(root, (payload) => {
+          if (payload && payload.lines && payload.lines.length) {
+            handleCapturePayload(payload);
+          }
+        });
+        if (domObserver?.start) domObserver.start();
+      } catch (_) {}
+      // Reset autoFollow to default true on song change
+      if (panel?.setAutoFollow) panel.setAutoFollow(true);
+      panel?.setSongId(songId);
+      panel?.resetForAnalyze?.({ analyzeKey: null, reason: "song-change", message: "正在分析当前歌词..." });
+    }
+    currentSongId = songId;
+    diagnostics?.updateState?.({
+      songId,
+      language: null,
+      lyricsSource: "none",
+      cardCount: 0,
+      currentCardIndex: null,
+      displayedAnalyzeKey: null,
+      displayedCardCount: 0,
+      lastSongChangeAt: Date.now(),
+      lastPanelResetReason: currentAnalyzeKey ? "song-change" : null,
+      apiStatus: "idle",
+      lastError: null,
+      analysisSkippedReason: null,
+      analyzeTriggerBlockedReason: null,
+      captureStatus: "waiting-for-lyrics",
+      captureSource: null,
+      activeCaptureSource: null,
+      activeCaptureLineCount: 0,
+      activeCaptureScore: 0,
+      analyzeTriggerStatus: "blocked-no-lyrics",
+      lastSettledAnalyzeKey: null,
+      lastSettledAnalyzeStatus: null,
+      lastSettledAt: 0,
+      cacheHit: false,
+      cacheKey: null,
+      cacheUseStatus: "not-checked",
+      autoFollowSuppressedUntil: null,
+      lastManualNavigationAt: null,
+      autoFollowRestoreReason: "song-change"
+    });
+    analyzeSong(songId, { forceRefresh: false, trigger: "playstate" });
+  }
+
+  async function retryCurrentSong(songId) {
+    const targetSongId = songId || currentSongId || Sync.getCurrentSongId();
+    suppressedSongId = null;
+    lastSettledAnalyzeKey = null;
+    lastSettledAnalyzeStatus = null;
+    lastSettledAt = 0;
+    lyricsFingerprintToCanonicalKey.clear();
+    keyAliasMap.clear();
+    canonicalToProvisionalKeys.clear();
+    if (targetSongId) panel?.setSongId(targetSongId);
+    diagnostics?.updateState?.({
+      forceRefreshReason: "manual-retry",
+      lastRetryAt: Date.now()
+    });
+    const captured = Lyrics.getLastCapturedLyrics?.();
+    if (!targetSongId && (!captured || !captured.length)) return;
+    await analyzeSong(targetSongId || null, {
+      forceRefresh: true,
+      capturePayload: captured && captured.length ? captured : null,
+      captureSource: captured && captured.length ? "manual-retry" : null,
+      captureFingerprint: captured && captured.length ? Lyrics.fingerprintCapturedLyrics?.(captured) : null,
+      trigger: "manual-retry"
+    });
+  }
+
+  async function analyzeSong(songId, options = {}) {
+    const {
+      forceRefresh = false,
+      capturePayload = null,
+      captureSource = null,
+      captureFingerprint = null,
+      trigger = "playstate"
+    } = options;
+    const isFallback = String(trigger).endsWith("+fallback");
+    const cardGenerationMode = settings.cardGenerationMode === "selected" ? "selected" : "per-line";
+    const maxLines = isFallback && cardGenerationMode !== "per-line"
+      ? settings.fallbackMaxLines
+      : settings.maxAnalysisLines;
+    const batchSize = PER_LINE_BATCH_SIZE;
+    const maxTokens = isFallback ? settings.fallbackMaxTokens : settings.analyzeMaxTokens;
+    const timeoutMs = isFallback ? settings.fallbackTimeoutMs : settings.analyzeTimeoutMs;
+    const temperature = settings.analyzeTemperature;
+
+    // ── Phase 0: prechecks + cacheKey (no abort yet) ──
+
+    if (songId && suppressedSongId === songId) {
+      panel?.hide();
+      diagnostics?.updateState?.({ analysisSkippedReason: "suppressed", analyzeTriggerBlockedReason: "suppressed" });
+      return;
+    }
+
+    if (!settings.autoAnalyze) {
+      Utils.log("自动拆解已关闭，跳过", songId);
+      diagnostics?.updateState?.({ apiStatus: "auto-disabled", analysisSkippedReason: "auto-analyze-off", analyzeTriggerBlockedReason: "auto-analyze-off" });
+      panel?.hide();
+      return;
+    }
+
+    let lyricResult = null;
+    if (capturePayload && Array.isArray(capturePayload) && capturePayload.length) {
+      const normalized = Lyrics.normalizeLyricPayload(capturePayload);
+      if (normalized.length) {
+        lyricResult = {
+          source: captureSource || "runtime-capture",
+          lines: normalized,
+          payload: capturePayload
+        };
+      }
+    }
+    if (!lyricResult) {
+      const captureResult = await Capture.waitForCapture?.(root, {
+        songId: songId || null,
+        maxWaitMs: 8000,
+        pollMs: 400,
+        signal: activeController?.signal,
+        // Reject captures that still hold the previous song's lyrics. Keeps
+        // waitForCapture polling until amll-state / console source catches up
+        // to the new song, instead of returning the stale result on the first
+        // poll. The reject window matches PREVIOUS_SONG_LYRICS_REJECT_MS.
+        isStaleLines: (lines) => {
+          if (!previousSongLyricsSignature) return false;
+          if (Date.now() - songChangeAt >= PREVIOUS_SONG_LYRICS_REJECT_MS) return false;
+          if (!Array.isArray(lines) || !lines.length) return false;
+          const candidateSig = buildLyricsTextSignature(
+            lines.map((l) => ({ text: l.original ?? l.text }))
+          );
+          return Boolean(candidateSig) && candidateSig === previousSongLyricsSignature;
+        }
+      });
+      if (captureResult) {
+        if (captureResult.source === "cache") {
+          recordCacheFallbackNotUsed(captureResult);
+        } else {
+          // Build lyricResult from unified capture payload
+          const captureLines = captureResult.lines || [];
+          if (captureLines.length) {
+            const rawPayload = captureLines.map((l) => ({
+              index: l.lineIndex,
+              text: l.original,
+              startTime: l.startMs,
+              endTime: l.endMs,
+              referenceTranslation: l.translation || undefined,
+              romanLyric: l.romanLyric || undefined
+            }));
+            const normalized = Lyrics.normalizeLyricPayload(rawPayload);
+            if (normalized.length) {
+              lyricResult = {
+                source: captureResult.source || "capture-pipeline",
+                lines: normalized,
+                payload: rawPayload
+              };
+              diagnostics?.updateState?.({
+                captureStatus: "captured-valid-lines",
+                captureSource: captureResult.source || null
+              });
+            }
+          }
+        }
+      }
+      if (!lyricResult) {
+        // Final attempt: check cache for any cards matching current songId
+        const cacheFallback = Capture.readCacheFallback?.(root, {
+          songId: songId || null,
+          lyricsFingerprint: null,
+          lyricsHash: null
+        });
+        if (cacheFallback) {
+          recordCacheFallbackNotUsed(cacheFallback);
+        }
+        const afterCacheState = diagnostics?.getState?.() || {};
+        const blockedReason = afterCacheState.cacheHit && afterCacheState.cacheUseStatus === "diagnostic-only"
+          ? "cache-hit-not-used"
+          : "no-capture-source";
+        diagnostics?.updateState?.({
+          captureStatus: "capture-failed",
+          captureSource: null,
+          analyzeTriggerStatus: "blocked-no-lyrics",
+          analyzeTriggerBlockedReason: blockedReason
+        });
+        Utils.log("歌词获取失败，静默降级", songId);
+        diagnostics?.updateState?.({
+          lyricsSource: "none",
+          apiStatus: blockedReason === "cache-hit-not-used" ? "cache-hit-not-used" : "lyrics-unavailable",
+          panelStatus: blockedReason === "cache-hit-not-used" ? "blocked-no-lyrics" : null
+        });
+        panel?.hide();
+        return;
+      }
+    }
+    // Mark capture success
+    if (!(capturePayload && lyricResult)) {
+      diagnostics?.updateState?.({
+        captureStatus: "captured-valid-lines",
+        analyzeTriggerStatus: "running"
+      });
+    }
+
+    const preprocessReport = Lyrics.preprocessLyricLinesWithReport
+      ? Lyrics.preprocessLyricLinesWithReport(lyricResult.lines, maxLines)
+      : {
+          lines: Lyrics.preprocessLyricLines(lyricResult.lines, maxLines),
+          rawCount: Array.isArray(lyricResult.lines) ? lyricResult.lines.length : 0,
+          sentCount: 0,
+          droppedCount: 0
+        };
+    const lines = preprocessReport.lines;
+    diagnostics?.updateState?.({
+      rawLyricLineCount: preprocessReport.rawCount,
+      sentLyricLineCount: preprocessReport.sentCount,
+      droppedLyricLineCount: preprocessReport.droppedCount
+    });
+    if (!lines.length) {
+      Utils.log("歌词为空或无有效原文行，静默跳过", lyricResult.source);
+      diagnostics?.updateState?.({
+        lyricsSource: lyricResult.source,
+        apiStatus: "no-valid-lyrics",
+        analysisSkippedReason: "no-valid-lines",
+        analyzeTriggerBlockedReason: "no-valid-lines"
+      });
+      panel?.hide();
+      return;
+    }
+
+    const language = Detect.detectLanguage(lines.map((line) => line.text));
+    Utils.log("歌词来源", lyricResult.source);
+    Utils.log("语言检测结果", language);
+    diagnostics?.updateState?.({ language, lyricsSource: lyricResult.source });
+    if (language === "other") {
+      diagnostics?.updateState?.({ apiStatus: "skipped-other-language", analysisSkippedReason: "language-other", analyzeTriggerBlockedReason: "language-other" });
+      panel?.hide();
+      return;
+    }
+
+    if (!Settings.isApiConfigured(settings)) {
+      diagnostics?.updateState?.({ apiStatus: "not-configured", analysisSkippedReason: "api-not-configured", analyzeTriggerBlockedReason: "api-not-configured" });
+      panel?.showConfig(settings);
+      return;
+    }
+
+    const lyricsHash = Lyrics.lyricsHash(lines);
+    const currentLyricsSignature = buildLyricsTextSignature(lines);
+    if (!forceRefresh
+        && previousSongLyricsSignature
+        && currentLyricsSignature
+        && currentLyricsSignature === previousSongLyricsSignature
+        && Date.now() - songChangeAt < PREVIOUS_SONG_LYRICS_REJECT_MS) {
+      console.log("[LyricLens:stale-reject]", { source: lyricResult.source, songId, sigPreview: currentLyricsSignature.slice(0, 80) });
+      diagnostics?.updateState?.({
+        analysisSkippedReason: "previous-song-lyrics-stale",
+        analyzeTriggerBlockedReason: "previous-song-lyrics-stale",
+        analyzeTriggerStatus: "blocked-stale-lyrics",
+        staleLyricsRejectedAt: Date.now(),
+        staleLyricsRejectedSource: lyricResult.source
+      });
+      return;
+    }
+    const fingerprint = captureFingerprint || (capturePayload ? Lyrics.fingerprintCapturedLyrics?.(capturePayload) : null);
+    // Belt-and-suspenders: normalize songId to pure digits (strips track-/song- prefix)
+    const safeSongId = Sync.normalizeSongId?.(songId) || songId || null;
+    const cacheKeySongId = safeSongId
+      ? safeSongId
+      : (fingerprint ? `captured:${fingerprint}` : `lyrics:${lyricsHash}`);
+    const rawKey = Cache.buildCacheKey({
+      songId: cacheKeySongId,
+      lyricsHash,
+      apiEndpoint: settings.apiEndpoint,
+      modelName: settings.modelName,
+      promptVersion: Api.PROMPT_VERSION
+    });
+
+    diagnostics?.updateState?.({
+      lastAnalyzeTrigger: trigger,
+      lastAnalyzeKey: rawKey,
+      rawAnalyzeKey: rawKey,
+      analysisSkippedReason: null,
+      analyzeTriggerBlockedReason: null,
+      promotionReason: safeSongId ? "song-id-key-selected" : "song-id-unavailable",
+      cacheHit: false,
+      cacheKey: null,
+      cacheUseStatus: "not-checked",
+      ...(isFallback ? {} : { fallbackReason: null, fallbackOutcome: null })
+    });
+
+    const canonicalKey = fingerprint
+      ? resolveCanonicalAnalyzeKey(rawKey, fingerprint, songId)
+      : rawKey;
+
+    diagnostics?.updateState?.({
+      canonicalAnalyzeKey: canonicalKey,
+      currentAnalyzeKey: canonicalKey,
+      cardGenerationMode,
+      expectedCardCount: cardGenerationMode === "per-line" ? lines.length : null
+    });
+
+    // ── Phase 1: dedup gating ──
+
+    // G1: same in-flight canonical key → skip, don't abort
+    if (!forceRefresh && inFlightAnalyzeKey === canonicalKey) {
+      Utils.log("已有相同分析在执行中，跳过", canonicalKey);
+      recordDuplicateAnalyzeSkip("same-inflight-canonical-key", canonicalKey);
+      return;
+    }
+
+    // G2: same failed settled canonical key → skip, don't reset loading
+    if (!forceRefresh && lastSettledAnalyzeKey === canonicalKey && FAILED_SETTLED_STATUSES.has(lastSettledAnalyzeStatus)) {
+      Utils.log("相同分析键已处于失败终端状态，跳过", canonicalKey, lastSettledAnalyzeStatus);
+      recordDuplicateAnalyzeSkip("same-settled-canonical-key", canonicalKey);
+      return;
+    }
+
+    // G3: settled success + canonical cache/cards → serve directly
+    if (!forceRefresh && lastSettledAnalyzeKey === canonicalKey && lastSettledAnalyzeStatus === "success") {
+      const currentAnalysisKey = resolveAliasKey(currentAnalysis?.analyzeKey);
+      const hasCurrentCards =
+        currentAnalysis?.cards?.length &&
+        (currentAnalysisKey === canonicalKey || displayedAnalyzeKey === canonicalKey);
+      if (hasCurrentCards) {
+        Utils.log("settled success 卡片仍在内存，跳过", canonicalKey);
+        lastAnalyzedKey = canonicalKey;
+        currentAnalysis.analyzeKey = canonicalKey;
+        displayedAnalyzeKey = canonicalKey;
+        currentAnalyzeKey = canonicalKey;
+        recordDuplicateAnalyzeSkip("same-settled-success-present", canonicalKey, {
+          canonicalAnalyzeKey: canonicalKey,
+          currentAnalyzeKey: canonicalKey,
+          displayedAnalyzeKey: canonicalKey,
+          cardCount: currentAnalysis.cards.length,
+          displayedCardCount: currentAnalysis.cards.length,
+          panelStatus: diagnostics?.getState?.()?.panelStatus || "success",
+          cacheHit: Cache.defaultCache.has(canonicalKey),
+          cacheKey: Cache.defaultCache.has(canonicalKey) ? canonicalKey : null,
+          cacheUseStatus: Cache.defaultCache.has(canonicalKey) ? "hit-not-used-current-success" : "not-checked"
+        });
+        return;
+      }
+      if (Cache.defaultCache.has(canonicalKey)) {
+        Utils.log("settled success 缓存命中但不自动显示", canonicalKey);
+        recordDuplicateAnalyzeSkip("same-settled-success-cache-not-used", canonicalKey, {
+          cacheHit: true,
+          cacheKey: canonicalKey,
+          cacheUseStatus: "diagnostic-only"
+        });
+        return;
+      }
+      Utils.log("settled success 但无可用卡片，允许重新分析", canonicalKey);
+    }
+
+    // G4: forceRefresh clears settled state for this canonical key
+    if (forceRefresh && lastSettledAnalyzeKey === canonicalKey) {
+      Utils.log("forceRefresh 清除当前 canonical key 的 settled 状态", canonicalKey);
+      lastSettledAnalyzeKey = null;
+      lastSettledAnalyzeStatus = null;
+      lastSettledAt = 0;
+    }
+
+    // G5: cache hit for non-settled case
+    if (!forceRefresh && Cache.defaultCache.has(canonicalKey)) {
+      Utils.log("内存缓存命中但不作为当前捕获结果", canonicalKey);
+      diagnostics?.updateState?.({
+        cacheHit: true,
+        cacheKey: canonicalKey,
+        cacheUseStatus: "diagnostic-only"
+      });
+    }
+
+    // ── Phase 2: confirmed new canonical request → abort old ──
+
+    const requestId = activeRequestId + 1;
+    activeRequestId = requestId;
+    abortActiveRequest({ reason: "new-analyze-key" });
+    activeRequestId = requestId;
+    activeController = new AbortController();
+
+    // ── Phase 3: clear old key's display ──
+
+    if (currentAnalyzeKey !== canonicalKey) {
+      currentAnalyzeKey = canonicalKey;
+      clearDisplayedCards(canonicalKey, "analyze-key-changed");
+    } else if (!displayedAnalyzeKey || displayedAnalyzeKey !== canonicalKey) {
+      diagnostics?.updateState?.({ currentAnalyzeKey: canonicalKey });
+    }
+
+    // ── Phase 4: start request ──
+
+    inFlightAnalyzeKey = canonicalKey;
+    diagnostics?.updateState?.({
+      inFlightAnalyzeKey: canonicalKey,
+      apiStatus: "requesting",
+      analyzeTriggerStatus: "running",
+      lastError: null,
+      panelStatus: "loading",
+      panelTextSample: isFallback ? "完整分析超时，正在尝试小样本分析..." : "正在拆解歌词...",
+      panelLoadingStartedAt: Date.now(),
+      actualCardCount: null,
+      missingCardLineIndexes: [],
+      analyzeBatchCount: null,
+      analyzeMergedCardCount: null,
+      partialCardGeneration: false
+    });
+    panel?.showLoading(isFallback ? "完整分析超时，正在尝试小样本分析..." : "正在拆解歌词...");
+    startWatchdog(canonicalKey, {
+      batchCount: countAnalysisBatches(lines, batchSize, cardGenerationMode),
+      concurrency: countAnalysisConcurrency(lines, batchSize, cardGenerationMode),
+      requestTimeoutMs: timeoutMs
+    });
+    Utils.log("API 请求开始", { endpoint: settings.apiEndpoint, model: settings.modelName, songId: cacheKeySongId, trigger, canonicalKey });
+
+    const initialCurrentMs = playbackHasRealTime && Number.isFinite(lastProgressMs)
+      ? lastProgressMs
+      : (readTrustedPlaybackSnapshot()?.timeMs ?? null);
+    const playbackState = { currentMs: initialCurrentMs };
+    analysisPlaybackState = playbackState;
+    try {
+      const analysisReport = await requestCardsForLines({
+        lines,
+        language,
+        timeoutMs,
+        maxTokens,
+        temperature,
+        batchSize,
+        isFallback,
+        cardGenerationMode,
+        signal: activeController.signal,
+        currentMs: initialCurrentMs,
+        playbackState,
+        onPartialBatch: ({ cards: partialCards, batchIndex, totalBatches, batchOriginalIndex }) => {
+          if (!isActive(requestId, songId)) return;
+          if (inFlightAnalyzeKey !== canonicalKey) return;
+          if (!Array.isArray(partialCards) || !partialCards.length) return;
+          const sortedPartial = sortCards(partialCards, lines);
+          const finalCanonicalKeyForPartial = resolveAliasKey(canonicalKey);
+          diagnostics?.updateState?.({
+            partialBatchIndex: batchIndex,
+            partialBatchOriginalIndex: batchOriginalIndex,
+            partialTotalBatches: totalBatches,
+            partialCardsRenderedAt: Date.now(),
+            partialCardCount: sortedPartial.length,
+            panelStatus: "streaming",
+            panelLastRenderReason: "partial-batch",
+            panelTextSample: `已生成 ${sortedPartial.length} / ${lines.length} 张卡片`
+          });
+          setAnalysis({
+            songId: cacheKeySongId,
+            lyricsHash,
+            language,
+            lines,
+            cards: sortedPartial,
+            analyzeKey: finalCanonicalKeyForPartial,
+            partial: true
+          });
+        }
+      });
+      if (!isActive(requestId, songId)) {
+        inFlightAnalyzeKey = null;
+        diagnostics?.updateState?.({ inFlightAnalyzeKey: null });
+        return;
+      }
+      const report = analysisReport.report;
+      const cards = sortCards(analysisReport.cards, lines);
+      const coverage = validateCardCoverage(cards, lines, cardGenerationMode);
+      const finalCanonicalKey = resolveAliasKey(canonicalKey);
+      if (finalCanonicalKey !== canonicalKey) {
+        diagnostics?.updateState?.({
+          canonicalAnalyzeKey: finalCanonicalKey,
+          currentAnalyzeKey: finalCanonicalKey,
+          analyzeKeyAliasFrom: canonicalKey,
+          analyzeKeyAliasTo: finalCanonicalKey
+        });
+      }
+      Cache.defaultCache.set(finalCanonicalKey, cards);
+      lastAnalyzedKey = finalCanonicalKey;
+      inFlightAnalyzeKey = null;
+      Utils.log("API 请求成功", { cards: cards.length, parsed: report.parsedCount, canonicalKey: finalCanonicalKey });
+      clearWatchdog();
+      if (cards.length > 0) {
+        const status = coverage.partialCardGeneration ? "success-with-missing" : "success";
+        settleAnalyzeKey(finalCanonicalKey, "success");
+        diagnostics?.updateState?.({
+          apiStatus: status,
+          analyzeTriggerStatus: "success",
+          cardCount: cards.length,
+          lastParsedCardsCount: report.parsedCount,
+          lastNormalizedCardsCount: report.normalizedCount,
+          cardDropReasons: report.dropReasons,
+          inFlightAnalyzeKey: null,
+          fallbackOutcome: isFallback ? "success" : null,
+          lastError: null,
+          panelStatus: status,
+          expectedCardCount: coverage.expectedCardCount,
+          actualCardCount: coverage.actualCardCount,
+          missingCardLineIndexes: coverage.missingCardLineIndexes,
+          partialCardGeneration: coverage.partialCardGeneration,
+          analyzeMergedCardCount: cards.length,
+          canonicalAnalyzeKey: finalCanonicalKey,
+          currentAnalyzeKey: finalCanonicalKey
+        });
+        setAnalysis({ songId: cacheKeySongId, lyricsHash, language, lines, cards, analyzeKey: finalCanonicalKey });
+      } else {
+        settleAnalyzeKey(finalCanonicalKey, "no-cards");
+        diagnostics?.updateState?.({
+          apiStatus: "no-cards",
+          cardCount: 0,
+          lastParsedCardsCount: report.parsedCount,
+          lastNormalizedCardsCount: report.normalizedCount,
+          cardDropReasons: report.dropReasons,
+          inFlightAnalyzeKey: null,
+          fallbackOutcome: isFallback ? "success" : null,
+          lastError: "normalize 后无可用卡片",
+          panelStatus: "no-cards",
+          panelTextSample: "没有生成可用卡片",
+          expectedCardCount: coverage.expectedCardCount,
+          actualCardCount: coverage.actualCardCount,
+          missingCardLineIndexes: coverage.missingCardLineIndexes,
+          partialCardGeneration: coverage.partialCardGeneration,
+          analyzeMergedCardCount: cards.length,
+          canonicalAnalyzeKey: finalCanonicalKey,
+          currentAnalyzeKey: finalCanonicalKey
+        });
+        clearDisplayedCards(finalCanonicalKey, "no-cards", "没有生成可用卡片");
+        panel?.showError?.("没有生成可用卡片");
+      }
+      lastLyricsHash = lyricsHash;
+    } catch (err) {
+      inFlightAnalyzeKey = null;
+      clearWatchdog();
+      if (!isActive(requestId, songId)) {
+        diagnostics?.updateState?.({ inFlightAnalyzeKey: null });
+        return;
+      }
+      if (err?.name === "AbortError") {
+        Utils.log("API 请求已取消", songId);
+        diagnostics?.updateState?.({ apiStatus: "aborted", inFlightAnalyzeKey: null });
+        return;
+      }
+      const finalCanonicalKey = resolveAliasKey(canonicalKey);
+      if (err?.name === "TimeoutError") {
+        Utils.warn("API 请求超时", err);
+        settleAnalyzeKey(finalCanonicalKey, "timeout");
+        clearDisplayedCards(finalCanonicalKey, "timeout", "当前歌词分析超时");
+        diagnostics?.updateState?.({
+          apiStatus: "timeout",
+          lastError: "请求超时",
+          inFlightAnalyzeKey: null,
+          fallbackOutcome: isFallback ? "timeout" : null,
+          panelStatus: "timeout",
+          panelTextSample: "当前歌词分析超时，可稍后重试",
+          panelLastRenderReason: isFallback ? "fallback-timeout" : "timeout"
+        });
+        if (settings.fallbackOnTimeout === true && !isFallback) {
+          diagnostics?.updateState?.({
+            apiStatus: "retrying-small-sample",
+            fallbackReason: "primary-timeout",
+            fallbackOutcome: null
+          });
+          await analyzeSong(songId, {
+            forceRefresh: true,
+            capturePayload: capturePayload || lyricResult.payload,
+            captureSource: captureSource || lyricResult.source,
+            captureFingerprint,
+            trigger: `${trigger}+fallback`
+          });
+          return;
+        }
+        panel?.showError("请求超时，点击重试");
+        return;
+      }
+      if (err?.name === "NetworkError") {
+        Utils.warn("API 网络错误", err.message);
+        settleAnalyzeKey(finalCanonicalKey, "error");
+        clearDisplayedCards(finalCanonicalKey, "error", "网络连接失败，请检查网络后重试");
+        diagnostics?.updateState?.({
+          apiStatus: "network-error",
+          lastError: err.originalMessage || err.message || "网络错误",
+          inFlightAnalyzeKey: null,
+          fallbackOutcome: isFallback ? "failed" : null,
+          panelStatus: "error",
+          panelTextSample: "网络连接失败，请检查网络后重试"
+        });
+        panel?.showError("网络连接失败，请检查网络后重试");
+        return;
+      }
+      if (err?.name === "ApiError") {
+        const status = err.status;
+        if (status === 429) {
+          settleAnalyzeKey(finalCanonicalKey, "rate-limited");
+          clearDisplayedCards(finalCanonicalKey, "rate-limited", "请求限流或额度不足");
+          diagnostics?.updateState?.({
+            apiStatus: "rate-limited",
+            lastError: "请求限流或额度不足",
+            inFlightAnalyzeKey: null,
+            panelStatus: "rate-limited",
+            panelTextSample: "请求限流或额度不足"
+          });
+          panel?.showError("请求限流或额度不足");
+          return;
+        }
+        if (status === 400 || status === 404) {
+          settleAnalyzeKey(finalCanonicalKey, "error");
+          clearDisplayedCards(finalCanonicalKey, "error", "模型或请求参数不可用");
+          diagnostics?.updateState?.({
+            apiStatus: "error",
+            lastError: "模型或请求参数不可用",
+            inFlightAnalyzeKey: null,
+            panelStatus: "error",
+            panelTextSample: "模型或请求参数不可用"
+          });
+          panel?.showError("模型或请求参数不可用");
+          return;
+        }
+        if (status === 401 || status === 403) {
+          settleAnalyzeKey(finalCanonicalKey, "error");
+          clearDisplayedCards(finalCanonicalKey, "error", "密钥或权限问题");
+          diagnostics?.updateState?.({
+            apiStatus: "error",
+            lastError: "密钥或权限问题",
+            inFlightAnalyzeKey: null,
+            panelStatus: "error",
+            panelTextSample: "密钥或权限问题"
+          });
+          panel?.showError("密钥或权限问题");
+          return;
+        }
+      }
+      if (err?.name === "ApiParseError") {
+        Utils.warn("API 返回内容解析失败", err);
+        settleAnalyzeKey(finalCanonicalKey, "parse-error");
+        const isTruncated = err.finishReasonWasLength || err.stage === "truncated-content";
+        const errorTextSample = isTruncated
+          ? "模型输出太长被截断，点击重试"
+          : "API 返回格式无法解析";
+        clearDisplayedCards(finalCanonicalKey, "parse-error", errorTextSample);
+        diagnostics?.updateState?.({
+          apiStatus: "parse-error",
+          lastError: `parse-error[${err.stage || "parse"}]: ${err.message || ""}`,
+          lastParsedContentSample: err.contentSample || null,
+          lastResponseTextSample: err.responseTextSample || null,
+          fallbackOutcome: isFallback ? "failed" : null,
+          inFlightAnalyzeKey: null,
+          panelStatus: "parse-error",
+          panelTextSample: errorTextSample,
+          parseFailureReason: isTruncated ? "finish_reason_length" : (err.stage || "content-json"),
+          finishReasonWasLength: Boolean(err.finishReasonWasLength),
+          extractedJsonStrategy: err.extractedJsonStrategy || null,
+          rawContentLength: err.rawContentLength || null
+        });
+        panel?.showError("解析失败，点击重试");
+        return;
+      }
+      Utils.warn("API 请求失败", err);
+      settleAnalyzeKey(finalCanonicalKey, "error");
+      clearDisplayedCards(finalCanonicalKey, "error", "拆解失败，点击重试");
+      diagnostics?.updateState?.({
+        apiStatus: "error",
+        lastError: err.message || String(err),
+        fallbackOutcome: isFallback ? "failed" : null,
+        inFlightAnalyzeKey: null,
+        panelStatus: "error",
+        panelTextSample: "拆解失败，点击重试"
+      });
+      panel?.showError("拆解失败，点击重试");
+    } finally {
+      if (analysisPlaybackState === playbackState) analysisPlaybackState = null;
+    }
+  }
+
+  // ── Key canonicalization ──
+
+  function resolveAliasKey(key) {
+    if (!key) return key;
+    let current = key;
+    const seen = new Set();
+    while (keyAliasMap.has(current) && !seen.has(current)) {
+      seen.add(current);
+      current = keyAliasMap.get(current);
+    }
+    return current;
+  }
+
+  function recordDuplicateAnalyzeSkip(reason, canonicalKey, extra = {}) {
+    const state = diagnostics?.getState?.() || {};
+    diagnostics?.updateState?.({
+      analysisSkippedReason: reason,
+      analyzeTriggerStatus: "skipped-duplicate",
+      analyzeTriggerBlockedReason: reason,
+      skippedDuplicateAnalyzeCount: (state.skippedDuplicateAnalyzeCount || 0) + 1,
+      lastDuplicateCaptureKey: canonicalKey || null,
+      lastDuplicateCaptureAt: Date.now(),
+      ...extra
+    });
+  }
+
+  function resolveCanonicalAnalyzeKey(rawKey, fingerprint, songId) {
+    if (keyAliasMap.has(rawKey)) {
+      return resolveAliasKey(rawKey);
+    }
+    const existingCanonical = lyricsFingerprintToCanonicalKey.get(fingerprint);
+    if (existingCanonical) {
+      if (songId && typeof existingCanonical === "string" && existingCanonical.startsWith("captured:")) {
+        promoteCanonicalKey(fingerprint, rawKey);
+        return rawKey;
+      }
+      if (existingCanonical !== rawKey) {
+        keyAliasMap.set(rawKey, existingCanonical);
+        if (!canonicalToProvisionalKeys.has(existingCanonical)) {
+          canonicalToProvisionalKeys.set(existingCanonical, new Set());
+        }
+        canonicalToProvisionalKeys.get(existingCanonical).add(rawKey);
+        diagnostics?.updateState?.({
+          rawAnalyzeKey: rawKey,
+          canonicalAnalyzeKey: existingCanonical,
+          analyzeKeyAliasFrom: rawKey,
+          analyzeKeyAliasTo: existingCanonical,
+          keyAliasReason: "same-lyrics-key-alias",
+          promotionReason: "same-lyrics-key-alias",
+          lastKeyAliasAt: Date.now()
+        });
+      }
+      return existingCanonical;
+    }
+    lyricsFingerprintToCanonicalKey.set(fingerprint, rawKey);
+    return rawKey;
+  }
+
+  function promoteCanonicalKey(fingerprint, newCanonicalKey) {
+    const oldCanonical = lyricsFingerprintToCanonicalKey.get(fingerprint);
+    if (!oldCanonical || oldCanonical === newCanonicalKey) return;
+    keyAliasMap.delete(newCanonicalKey);
+    keyAliasMap.set(oldCanonical, newCanonicalKey);
+    if (inFlightAnalyzeKey === oldCanonical) inFlightAnalyzeKey = newCanonicalKey;
+    if (lastAnalyzedKey === oldCanonical) lastAnalyzedKey = newCanonicalKey;
+    if (lastSettledAnalyzeKey === oldCanonical) lastSettledAnalyzeKey = newCanonicalKey;
+    if (currentAnalyzeKey === oldCanonical) currentAnalyzeKey = newCanonicalKey;
+    if (displayedAnalyzeKey === oldCanonical) displayedAnalyzeKey = newCanonicalKey;
+    if (currentAnalysis?.analyzeKey === oldCanonical) currentAnalysis.analyzeKey = newCanonicalKey;
+    if (Cache.defaultCache.has(oldCanonical)) {
+      Cache.defaultCache.set(newCanonicalKey, Cache.defaultCache.get(oldCanonical));
+      Cache.defaultCache.delete(oldCanonical);
+    }
+    if (canonicalToProvisionalKeys.has(oldCanonical)) {
+      canonicalToProvisionalKeys.set(newCanonicalKey, canonicalToProvisionalKeys.get(oldCanonical));
+      canonicalToProvisionalKeys.delete(oldCanonical);
+    }
+    canonicalToProvisionalKeys.set(newCanonicalKey, (canonicalToProvisionalKeys.get(newCanonicalKey) || new Set()).add(oldCanonical));
+    lyricsFingerprintToCanonicalKey.set(fingerprint, newCanonicalKey);
+    diagnostics?.updateState?.({
+      analyzeKeyAliasFrom: oldCanonical,
+      analyzeKeyAliasTo: newCanonicalKey,
+      keyAliasReason: "captured-key-promoted-to-song-key",
+      promotionReason: "captured-key-promoted-to-song-key",
+      lastKeyAliasAt: Date.now(),
+      canonicalAnalyzeKey: newCanonicalKey
+    });
+    Utils.log("canonical key promoted", { from: oldCanonical, to: newCanonicalKey });
+  }
+
+  // ── Terminal state helpers ──
+
+  function settleAnalyzeKey(key, status) {
+    if (!key || !TERMINAL_STATUSES.has(status)) return;
+    lastSettledAnalyzeKey = key;
+    lastSettledAnalyzeStatus = status;
+    lastSettledAt = Date.now();
+    clearWatchdog();
+    diagnostics?.updateState?.({
+      lastSettledAnalyzeKey: key,
+      lastSettledAnalyzeStatus: status,
+      lastSettledAt
+    });
+  }
+
+  function startWatchdog(key, options = {}) {
+    clearWatchdog();
+    const batchCount = Math.max(1, Math.round(Number(options.batchCount) || 1));
+    const concurrency = Math.max(1, Math.round(Number(options.concurrency) || 1));
+    const waveCount = Math.max(1, Math.ceil(batchCount / concurrency));
+    const requestTimeoutMs = Number.isFinite(Number(options.requestTimeoutMs)) && Number(options.requestTimeoutMs) > 0
+      ? Math.round(Number(options.requestTimeoutMs))
+      : (settings.analyzeTimeoutMs || 60000);
+    const maxWait = (requestTimeoutMs * waveCount) + 5000;
+    const startedAt = Date.now();
+    diagnostics?.updateState?.({
+      panelLoadingStartedAt: startedAt,
+      loadingWatchdogBatchCount: batchCount,
+      loadingWatchdogConcurrency: concurrency,
+      loadingWatchdogWaveCount: waveCount,
+      loadingWatchdogRequestTimeoutMs: requestTimeoutMs,
+      loadingWatchdogMaxWaitMs: maxWait,
+      loadingWatchdogTriggered: false
+    });
+    watchdogTimer = setInterval(() => {
+      if (inFlightAnalyzeKey !== key) {
+        clearWatchdog();
+        return;
+      }
+      if (Date.now() - startedAt < maxWait) return;
+      clearWatchdog();
+      settleAnalyzeKey(key, "error");
+      diagnostics?.updateState?.({
+        panelStatus: "error",
+        panelTextSample: "分析没有正常结束，请重试",
+        panelLastRenderReason: "loading-watchdog-timeout",
+        loadingWatchdogTriggered: true,
+        apiStatus: "error",
+        lastError: "loading watchdog timeout"
+      });
+      panel?.showError("分析没有正常结束，请重试");
+      inFlightAnalyzeKey = null;
+      abortActiveRequest({ silentDiagnostics: true, reason: "watchdog" });
+    }, 500);
+    if (watchdogTimer.unref) watchdogTimer.unref();
+  }
+
+  function clearWatchdog() {
+    if (watchdogTimer) {
+      clearInterval(watchdogTimer);
+      watchdogTimer = null;
+    }
+  }
+
+  async function waitForLyrics(songId, signal) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 6000) {
+      if (signal?.aborted) return null;
+      if (songId && currentSongId && songId !== currentSongId) return null;
+      const result = Lyrics.getCurrentLyricsFromGlobals() || Lyrics.tryGetLyricsFromNcmRuntime() || Lyrics.getCapturedLyrics();
+      if (result?.lines?.length) {
+        const hash = Lyrics.lyricsHash(Lyrics.preprocessLyricLines(result.lines));
+        if (!lastLyricsHash || hash !== lastLyricsHash || Date.now() - startedAt > 1500) {
+          return result;
+        }
+      }
+      await delay(500);
+    }
+    Utils.log("歌词获取失败，静默降级", songId);
+    diagnostics?.updateState?.({ lyricsSource: "none", apiStatus: "lyrics-unavailable" });
+    panel?.hide();
+    return null;
+  }
+
+  function sortCards(cards, lines) {
+    const order = new Map(lines.map((line, index) => [line.index, index]));
+    return cards.slice().sort((a, b) => (order.get(a.index) ?? 9999) - (order.get(b.index) ?? 9999));
+  }
+
+  function normalizeBatchSize(batchSize) {
+    return Number.isFinite(Number(batchSize)) && Number(batchSize) > 0
+      ? Math.max(1, Math.round(Number(batchSize)))
+      : PER_LINE_BATCH_SIZE;
+  }
+
+  function countAnalysisBatches(lines, batchSize, cardGenerationMode) {
+    if (cardGenerationMode !== "per-line") return 1;
+    const lineCount = Array.isArray(lines) ? lines.length : 0;
+    return Math.max(1, Math.ceil(lineCount / normalizeBatchSize(batchSize)));
+  }
+
+  function countAnalysisConcurrency(lines, batchSize, cardGenerationMode) {
+    const batchCount = countAnalysisBatches(lines, batchSize, cardGenerationMode);
+    return cardGenerationMode === "per-line"
+      ? Math.max(1, Math.min(PER_LINE_BATCH_CONCURRENCY, batchCount))
+      : 1;
+  }
+
+  function chunkLines(lines, batchSize) {
+    const chunks = [];
+    for (let i = 0; i < lines.length; i += batchSize) {
+      chunks.push(lines.slice(i, i + batchSize));
+    }
+    return chunks;
+  }
+
+  function mergeDropReasons(reports) {
+    const merged = {};
+    for (const report of reports) {
+      const reasons = report?.dropReasons || {};
+      for (const key of Object.keys(reasons)) {
+        merged[key] = (merged[key] || 0) + Number(reasons[key] || 0);
+      }
+    }
+    return Object.keys(merged).length ? merged : null;
+  }
+
+  function findStartBatchIndex(batches, currentMs) {
+    if (!Number.isFinite(Number(currentMs)) || !batches.length) return 0;
+    const timeMs = Number(currentMs);
+    for (let i = 0; i < batches.length; i += 1) {
+      const batch = batches[i];
+      if (!batch.length) continue;
+      const firstStart = Number(batch[0]?.startTime);
+      if (Number.isFinite(firstStart) && timeMs < firstStart) {
+        return Math.max(0, i - 1);
+      }
+    }
+    return batches.length - 1;
+  }
+
+  function orderBatchesByPlaybackTime(batches, currentMs) {
+    const indexed = batches.map((batch, originalIndex) => ({ batch, originalIndex }));
+    if (indexed.length <= 1) return indexed;
+    const startIndex = findStartBatchIndex(batches, currentMs);
+    if (startIndex <= 0 || startIndex >= indexed.length) return indexed;
+    return [...indexed.slice(startIndex), ...indexed.slice(0, startIndex)];
+  }
+
+  async function requestCardsForLines({ lines, language, timeoutMs, maxTokens, temperature, batchSize, isFallback, cardGenerationMode, signal, currentMs, playbackState, onPartialBatch }) {
+    const effectiveBatchSize = normalizeBatchSize(batchSize);
+    const rawBatches = cardGenerationMode === "per-line"
+      ? chunkLines(lines, effectiveBatchSize)
+      : [lines];
+    const orderedBatches = cardGenerationMode === "per-line"
+      ? orderBatchesByPlaybackTime(rawBatches, currentMs)
+      : rawBatches.map((batch, originalIndex) => ({ batch, originalIndex }));
+    const reports = [];
+    const mergedCards = [];
+    const concurrency = cardGenerationMode === "per-line"
+      ? Math.min(PER_LINE_BATCH_CONCURRENCY, orderedBatches.length)
+      : 1;
+
+    diagnostics?.updateState?.({
+      analyzeBatchCount: orderedBatches.length,
+      analyzeBatchIndex: null,
+      analyzeBatchSize: null,
+      analyzeMergedCardCount: 0,
+      analyzeBatchConcurrency: concurrency,
+      analyzeStartedBatchCount: 0,
+      analyzeCompletedBatchCount: 0,
+      analyzeFirstBatchOriginalIndex: orderedBatches[0]?.originalIndex ?? 0,
+      analyzeBatchOrder: orderedBatches.map((item) => item.originalIndex)
+    });
+
+    const batchController = new AbortController();
+    const relayAbort = () => batchController.abort();
+    if (signal) {
+      if (signal.aborted) batchController.abort();
+      else signal.addEventListener?.("abort", relayAbort, { once: true });
+    }
+    let nextBatchIndex = 0;
+    let startedBatchCount = 0;
+    let completedBatchCount = 0;
+    const batchResults = new Array(orderedBatches.length);
+
+    async function requestOneBatch(i) {
+      const { batch, originalIndex } = orderedBatches[i];
+      const formattedLyrics = Lyrics.formatLinesForPrompt(batch, { detailed: cardGenerationMode === "per-line" });
+      startedBatchCount += 1;
+      diagnostics?.updateState?.({
+        analyzeBatchIndex: i + 1,
+        analyzeBatchSize: batch.length,
+        analyzeBatchOriginalIndex: originalIndex,
+        analyzeStartedBatchCount: startedBatchCount
+      });
+      const parsed = await Api.requestAnalysis({
+        apiEndpoint: settings.apiEndpoint.trim(),
+        apiKey: settings.apiKey.trim(),
+        modelName: settings.modelName.trim(),
+        language,
+        formattedLyrics,
+        timeoutMs,
+        maxTokens,
+        temperature,
+        thinkingMode: settings.modelThinkingMode,
+        responseFormatMode: settings.responseFormatMode,
+        isFallback,
+        cardGenerationMode,
+        signal: batchController.signal
+      });
+      const report = Api.normalizeCardsWithReport
+        ? Api.normalizeCardsWithReport(parsed, batch)
+        : { cards: Api.normalizeCards(parsed, batch), parsedCount: 0, normalizedCount: 0, dropReasons: null };
+      batchResults[i] = { report, cards: report.cards, originalIndex };
+      completedBatchCount += 1;
+      const partialCards = batchResults.flatMap((result) => result?.cards || []);
+      diagnostics?.updateState?.({
+        analyzeBatchIndex: i + 1,
+        analyzeBatchOriginalIndex: originalIndex,
+        analyzeCompletedBatchCount: completedBatchCount,
+        analyzeMergedCardCount: partialCards.length
+      });
+      if (typeof onPartialBatch === "function" && completedBatchCount < orderedBatches.length) {
+        try {
+          onPartialBatch({
+            cards: partialCards,
+            batchIndex: i,
+            totalBatches: orderedBatches.length,
+            batchOriginalIndex: originalIndex
+          });
+        } catch (err) {
+          Utils.warn?.("onPartialBatch 回调失败", err);
+        }
+      }
+    }
+
+    let lastReprioritizedAtMs = null;
+    let reprioritizeCount = 0;
+
+    function scoreBatchForTime(item, targetMs) {
+      const batch = item?.batch;
+      if (!Array.isArray(batch) || !batch.length) return Infinity;
+      const firstStart = Number(batch[0]?.startTime);
+      if (!Number.isFinite(firstStart)) return Infinity;
+      const lastLine = batch[batch.length - 1];
+      const lastEnd = Number(lastLine?.endTime ?? lastLine?.startTime);
+      if (Number.isFinite(lastEnd) && targetMs >= firstStart && targetMs <= lastEnd + 1000) return 0;
+      return Math.abs(firstStart - targetMs);
+    }
+
+    function reprioritizeRemaining(startIndex) {
+      if (cardGenerationMode !== "per-line") return;
+      if (!playbackState || !Number.isFinite(Number(playbackState.currentMs))) return;
+      if (startIndex >= orderedBatches.length - 1) return;
+      const targetMs = Number(playbackState.currentMs);
+      if (lastReprioritizedAtMs !== null && Math.abs(targetMs - lastReprioritizedAtMs) < 1000) return;
+
+      let bestIdx = startIndex;
+      let bestScore = scoreBatchForTime(orderedBatches[startIndex], targetMs);
+      for (let j = startIndex + 1; j < orderedBatches.length; j += 1) {
+        const score = scoreBatchForTime(orderedBatches[j], targetMs);
+        if (score < bestScore) {
+          bestScore = score;
+          bestIdx = j;
+        }
+      }
+      lastReprioritizedAtMs = targetMs;
+      if (bestIdx === startIndex) return;
+      const swappedOut = orderedBatches[startIndex];
+      const swappedIn = orderedBatches[bestIdx];
+      orderedBatches[startIndex] = swappedIn;
+      orderedBatches[bestIdx] = swappedOut;
+      reprioritizeCount += 1;
+      diagnostics?.updateState?.({
+        analyzeReprioritizeCount: reprioritizeCount,
+        analyzeReprioritizeLastAt: Date.now(),
+        analyzeReprioritizeCurrentMs: targetMs,
+        analyzeReprioritizeFromBatch: swappedOut.originalIndex,
+        analyzeReprioritizeToBatch: swappedIn.originalIndex,
+        analyzeBatchOrder: orderedBatches.map((item) => item.originalIndex)
+      });
+    }
+
+    async function worker() {
+      while (nextBatchIndex < orderedBatches.length) {
+        if (batchController.signal.aborted) return;
+        reprioritizeRemaining(nextBatchIndex);
+        const i = nextBatchIndex;
+        nextBatchIndex += 1;
+        await requestOneBatch(i);
+      }
+    }
+
+    try {
+      await Promise.all(Array.from({ length: concurrency }, () => worker()));
+    } catch (err) {
+      batchController.abort();
+      throw err;
+    } finally {
+      if (signal) signal.removeEventListener?.("abort", relayAbort);
+    }
+
+    for (const result of batchResults) {
+      if (!result) continue;
+      reports.push(result.report);
+      mergedCards.push(...result.cards);
+    }
+
+    return {
+      cards: mergedCards,
+      report: {
+        cards: mergedCards,
+        parsedCount: reports.reduce((sum, report) => sum + Number(report.parsedCount || 0), 0),
+        normalizedCount: mergedCards.length,
+        dropReasons: mergeDropReasons(reports),
+        droppedSamples: reports.flatMap((report) => report.droppedSamples || []).slice(0, 6)
+      }
+    };
+  }
+
+  function validateCardCoverage(cards, lines, cardGenerationMode) {
+    if (cardGenerationMode !== "per-line") {
+      return {
+        expectedCardCount: null,
+        actualCardCount: cards.length,
+        missingCardLineIndexes: [],
+        partialCardGeneration: false
+      };
+    }
+    const cardIndexes = new Set(cards.map((card) => card.lineIndex ?? card.index));
+    const missing = lines
+      .map((line) => line.index)
+      .filter((index) => !cardIndexes.has(index));
+    return {
+      expectedCardCount: lines.length,
+      actualCardCount: cards.length,
+      missingCardLineIndexes: missing,
+      partialCardGeneration: missing.length > 0
+    };
+  }
+
+  function clearDisplayedCards(analyzeKey, reason, sampleText = "正在分析当前歌词...") {
+    displayedAnalyzeKey = null;
+    currentCardOrdinal = 0;
+    lastLineIndex = null;
+    diagnostics?.updateState?.({
+      currentAnalyzeKey: analyzeKey || null,
+      displayedAnalyzeKey: null,
+      displayedCardCount: 0,
+      currentCardIndex: 0,
+      currentCardLineIndex: null,
+      currentCardStartMs: null,
+      currentCardEndMs: null,
+      currentCardOriginal: null,
+      previousCardLineIndex: null,
+      previousCardOriginal: null,
+      previousCardStartMs: null,
+      nextCardLineIndex: null,
+      nextCardOriginal: null,
+      nextCardStartMs: null,
+      lastPanelResetReason: reason,
+      staleCardsCleared: true,
+      panelLastRenderReason: reason === "analyze-key-changed" ? "analyzing" : reason,
+      panelLastRenderedAt: Date.now(),
+      panelTextSample: sampleText
+    });
+    if (reason === "analyze-key-changed") {
+      panel?.resetForAnalyze?.({ analyzeKey, reason, message: sampleText });
+    }
+  }
+
+  function cardText(card) {
+    return String(card?.original || card?.line || "").slice(0, 200) || null;
+  }
+
+  function cardDiagnostics(cards, ordinal) {
+    const current = cards?.[ordinal] || null;
+    const previous = cards?.[ordinal - 1] || null;
+    const next = cards?.[ordinal + 1] || null;
+    return {
+      currentCardLineIndex: current?.lineIndex ?? current?.index ?? null,
+      currentCardStartMs: current?.startMs ?? current?.startTime ?? null,
+      currentCardEndMs: current?.endMs ?? current?.endTime ?? null,
+      currentCardOriginal: cardText(current),
+      previousCardLineIndex: previous?.lineIndex ?? previous?.index ?? null,
+      previousCardOriginal: cardText(previous),
+      previousCardStartMs: previous?.startMs ?? previous?.startTime ?? null,
+      nextCardLineIndex: next?.lineIndex ?? next?.index ?? null,
+      nextCardOriginal: cardText(next),
+      nextCardStartMs: next?.startMs ?? next?.startTime ?? null
+    };
+  }
+
+  function setAnalysis({ songId, lyricsHash, language, lines, cards, analyzeKey }) {
+    const cardsByIndex = new Map(cards.map((card) => [card.index, card]));
+    currentAnalysis = { songId, lyricsHash, language, lines, cards, cardsByIndex, analyzeKey };
+    displayedAnalyzeKey = analyzeKey || null;
+    currentAnalyzeKey = analyzeKey || currentAnalyzeKey;
+    currentCardOrdinal = selectOrdinalForCurrentTime(cards);
+    const currentCard = cards[currentCardOrdinal] || null;
+    diagnostics?.updateState?.({
+      cardCount: cards.length,
+      displayedAnalyzeKey,
+      displayedCardCount: cards.length,
+      currentCardIndex: currentCardOrdinal,
+      ...cardDiagnostics(cards, currentCardOrdinal),
+      panelLastRenderReason: "analyze-success",
+      panelLastRenderedAt: Date.now(),
+      panelTextSample: currentCard ? [currentCard.line || currentCard.original, currentCard.translation].filter(Boolean).join(" / ").slice(0, 200) : ""
+    });
+    panel?.setCardsState?.({
+      analyzeKey,
+      cards,
+      language,
+      analysis: currentAnalysis,
+      initialIndex: currentCardOrdinal,
+      currentMs: Number.isFinite(lastProgressMs) && playbackHasRealTime ? lastProgressMs : null,
+      reason: "analyze-success"
+    });
+    if (!panel?.setCardsState) {
+      renderCurrentProgress("analyze-success");
+    }
+    startPlaybackSyncLoop();
+  }
+
+  function mergeTimeSourceDiagnostics(candidates, failureReason) {
+    if (!diagnostics?.updateState) return;
+    const current = diagnostics.getState ? diagnostics.getState() : {};
+    const merged = Array.isArray(current.timeSourceCandidates)
+      ? current.timeSourceCandidates.slice()
+      : [];
+    for (const candidate of Array.isArray(candidates) ? candidates : []) {
+      if (!candidate?.name) continue;
+      const next = {
+        name: candidate.name,
+        status: candidate.status,
+        trusted: candidate.trusted === true,
+        ...(candidate.reason ? { reason: candidate.reason } : {}),
+        ...(candidate.source ? { source: candidate.source } : {})
+      };
+      const index = merged.findIndex((item) => item?.name === next.name);
+      if (index >= 0) merged[index] = next;
+      else merged.push(next);
+    }
+    diagnostics.updateState({
+      timeSourceCandidates: merged,
+      timeSourceFailureReason: failureReason ?? null
+    });
+  }
+
+  function appendFailureReason(base, reason) {
+    if (!reason) return base || null;
+    if (!base) return reason;
+    const parts = String(base).split(";").filter(Boolean);
+    return parts.includes(reason) ? base : base + ";" + reason;
+  }
+
+  function playProgressRegisteredWithoutEvents() {
+    const state = diagnostics?.getState?.() || {};
+    if (Number(state.playProgressEventCount || 0) > 0) return false;
+    return Array.isArray(state.timeSourceCandidates) && state.timeSourceCandidates.some((candidate) => (
+      candidate?.name === "PlayProgress" &&
+      candidate?.status === "registered" &&
+      candidate?.trusted === true
+    ));
+  }
+
+  function readTrustedPlaybackSnapshot() {
+    if (!Sync.readTrustedPlaybackTime) return null;
+    const result = Sync.readTrustedPlaybackTime(root);
+    let failureReason = result?.failureReason || null;
+    if ((result?.timeMs === null || result?.timeMs === undefined) && playProgressRegisteredWithoutEvents()) {
+      failureReason = appendFailureReason(failureReason, "playprogress-registered-no-events");
+    }
+    mergeTimeSourceDiagnostics(result?.candidates, failureReason);
+    if (result?.timeMs !== null && result?.timeMs !== undefined && Number.isFinite(Number(result.timeMs))) {
+      return {
+        timeMs: Number(result.timeMs),
+        status: "trusted-time-source",
+        source: result.source || "trusted-progress-getter"
+      };
+    }
+    return null;
+  }
+
+  function handleProgress(timeMs, progressArgs) {
+    // ── Synthesize song-change from PlayProgress trackId ──
+    // NCM (under certain BetterNCM channels) doesn't fire PlayState events for
+    // song changes, but it does pass a trackId (e.g. "1806096519_VPY7L3") as
+    // the first PlayProgress arg. Detect the change here so handleSongChange
+    // runs even when PlayState is dead.
+    if (Array.isArray(progressArgs) && progressArgs.length) {
+      const firstArg = progressArgs[0];
+      if (typeof firstArg === "string" && firstArg !== lastProgressRawTrackMarker) {
+        lastProgressRawTrackMarker = firstArg;
+        const extracted = Sync.extractSongIdFromConsoleString?.(firstArg);
+        if (extracted && extracted !== currentSongId) {
+          console.log("[LyricLens:song-change-from-progress]", { from: currentSongId, to: extracted, rawArg: firstArg });
+          handleSongChange(extracted);
+        }
+      }
+    }
+    lastProgressMs = timeMs;
+    playbackHasRealTime = true;
+    lastProgressEventAt = Date.now();
+    playbackBaseWallClock = 0;
+    playbackBaseMs = timeMs;
+    if (analysisPlaybackState) analysisPlaybackState.currentMs = timeMs;
+    // Determine sync quality: PlayProgress is firing, but is PlayState also available?
+    const playStateEvents = diagnostics?.getState?.()?.playStateEventCount || 0;
+    // Promote PlayProgress candidate to "live" so diagnostics reflect that real-time
+    // pushes are actually flowing (vs. just being registered).
+    mergeTimeSourceDiagnostics(
+      [{ name: "PlayProgress", status: "live", trusted: true, source: "PlayProgress(push)" }],
+      null
+    );
+    // Only clear paused flag if we weren't explicitly paused by a PlayState event
+    if (!playbackPaused) {
+      const syncStatus = playStateEvents > 0 ? "real-time-source" : "real-time-no-playstate";
+      diagnostics?.updateState?.({
+        playbackCurrentMs: timeMs,
+        playbackEstimatedMs: null,
+        playbackSyncStatus: syncStatus,
+        playbackPaused: false,
+        timeSourceFailureReason: null
+      });
+    } else {
+      // Keep paused state but update the real progress for future resume baseline
+      diagnostics?.updateState?.({
+        playbackCurrentMs: timeMs,
+        playbackEstimatedMs: null,
+        playbackSyncStatus: "paused",
+        playbackPaused: true,
+        timeSourceFailureReason: null
+      });
+    }
+    if (!currentAnalysis || suppressedSongId === currentAnalysis.songId) return;
+    // Check for console songId candidate promotion
+    checkConsoleSongIdPromotion();
+    syncPlaybackToTime(timeMs, "playback-sync", "real-time-source");
+  }
+
+  function renderCurrentProgress(reason = "playback-sync") {
+    if (!currentAnalysis || suppressedSongId === currentAnalysis.songId) return;
+    const card = currentAnalysis.cards[currentCardOrdinal] || null;
+    if (!card) {
+      diagnostics?.updateState?.({ currentCardIndex: null });
+      panel?.hide();
+      return;
+    }
+    diagnostics?.updateState?.({
+      currentCardIndex: currentCardOrdinal,
+      ...cardDiagnostics(currentAnalysis.cards, currentCardOrdinal),
+      panelLastRenderReason: reason,
+      panelLastRenderedAt: Date.now(),
+      panelTextSample: [card.line || card.original, card.translation].filter(Boolean).join(" / ").slice(0, 200)
+    });
+    if (panel?.renderCardAt) {
+      panel.renderCardAt(currentCardOrdinal, reason);
+    } else {
+      panel?.showCard(currentAnalysis, card.index);
+    }
+  }
+
+  function selectOrdinalForCurrentTime(cards) {
+    const snapshot = readPlaybackTimeSnapshot();
+    if (snapshot && Sync.selectCardByPlaybackTime) {
+      const index = Sync.selectCardByPlaybackTime(snapshot.timeMs, cards);
+      return Number.isInteger(index) ? index : 0;
+    }
+    return 0;
+  }
+
+  function readPlaybackTimeSnapshot() {
+    if (playbackPaused && playbackHasRealTime) {
+      return { timeMs: playbackBaseMs, status: "paused" };
+    }
+    const trustedSnapshot = readTrustedPlaybackSnapshot();
+    if (trustedSnapshot) return trustedSnapshot;
+    if (playbackHasRealTime) {
+      diagnostics?.updateState?.({ timeSourceFailureReason: null });
+      return { timeMs: playbackBaseMs, status: "real-time-source" };
+    }
+    return null;
+  }
+
+  function syncPlaybackToTime(timeMs, reason = "playback-sync", status = "trusted-time-source") {
+    if (!currentAnalysis?.cards?.length || !Sync.selectCardByPlaybackTime || !Number.isFinite(Number(timeMs))) {
+      const trustedSnapshot = readTrustedPlaybackSnapshot();
+      diagnostics?.updateState?.({
+        playbackSyncStatus: "no-time-source",
+        playbackCurrentMs: null,
+        playbackEstimatedMs: null,
+        playbackTimerActive: Boolean(playbackSyncTimer),
+        lastPlaybackSyncAt: Date.now(),
+        timeSourceFailureReason: trustedSnapshot ? null : (diagnostics?.getState?.()?.timeSourceFailureReason || "no-trusted-playback-time")
+      });
+      return;
+    }
+    if (panel?.getAutoFollow && panel.getAutoFollow() === false) {
+      diagnostics?.updateState?.({
+        playbackSyncStatus: "disabled",
+        playbackCurrentMs: timeMs,
+        playbackEstimatedMs: null,
+        playbackTimerActive: Boolean(playbackSyncTimer),
+        lastPlaybackSyncAt: Date.now()
+      });
+      return;
+    }
+    const nextOrdinal = Sync.selectCardByPlaybackTime(timeMs, currentAnalysis.cards);
+    const playStateEvents = diagnostics?.getState?.()?.playStateEventCount || 0;
+    const effectiveStatus = status === "real-time-source" && playStateEvents === 0
+      ? "real-time-no-playstate"
+      : status;
+    diagnostics?.updateState?.({
+      playbackSyncEnabled: true,
+      playbackSyncStatus: effectiveStatus,
+      playbackCurrentMs: timeMs,
+      playbackEstimatedMs: null,
+      playbackTimerActive: Boolean(playbackSyncTimer),
+      lastPlaybackSyncAt: Date.now()
+    });
+    if (typeof panel?.syncToPlayback === "function") {
+      const syncedOrdinal = panel.syncToPlayback(timeMs, reason);
+      if (Number.isInteger(syncedOrdinal)) currentCardOrdinal = syncedOrdinal;
+      return;
+    }
+    if (nextOrdinal === null || nextOrdinal === currentCardOrdinal) return;
+    currentCardOrdinal = nextOrdinal;
+    renderCurrentProgress(reason);
+  }
+
+  function startPlaybackSyncLoop() {
+    if (playbackSyncTimer) return;
+    const initialSnapshot = readPlaybackTimeSnapshot();
+    diagnostics?.updateState?.({
+      playbackSyncEnabled: true,
+      playbackTimerActive: true,
+      playbackSyncStatus: initialSnapshot ? initialSnapshot.status : "no-time-source",
+      playbackCurrentMs: initialSnapshot ? initialSnapshot.timeMs : null,
+      playbackEstimatedMs: null
+    });
+    playbackSyncTimer = setInterval(() => {
+      if (!currentAnalysis?.cards?.length) {
+        diagnostics?.updateState?.({
+          playbackSyncStatus: "no-time-source",
+          playbackTimerActive: Boolean(playbackSyncTimer),
+          lastPlaybackSyncAt: Date.now(),
+          timeSourceFailureReason: diagnostics?.getState?.()?.timeSourceFailureReason || "no-active-analysis"
+        });
+        return;
+      }
+      if (playbackPaused) {
+        diagnostics?.updateState?.({
+          playbackSyncStatus: "paused",
+          playbackTimerActive: true,
+          lastPlaybackSyncAt: Date.now()
+        });
+        return;
+      }
+      const snapshot = readPlaybackTimeSnapshot();
+      if (!snapshot) {
+        diagnostics?.updateState?.({
+          playbackSyncStatus: "no-time-source",
+          playbackCurrentMs: null,
+          playbackEstimatedMs: null,
+          playbackTimerActive: Boolean(playbackSyncTimer),
+          lastPlaybackSyncAt: Date.now(),
+          timeSourceFailureReason: diagnostics?.getState?.()?.timeSourceFailureReason || "no-trusted-playback-time"
+        });
+        return;
+      }
+      syncPlaybackToTime(snapshot.timeMs, "playback-sync", snapshot.status);
+    }, PLAYBACK_SYNC_INTERVAL_MS);
+    playbackSyncTimer.unref?.();
+  }
+
+  function stopPlaybackSyncLoop() {
+    if (playbackSyncTimer) clearInterval(playbackSyncTimer);
+    playbackSyncTimer = null;
+    playbackBaseWallClock = 0;
+    playbackBaseMs = 0;
+    playbackHasRealTime = false;
+    lastProgressEventAt = 0;
+    playbackPaused = false;
+    clearAutoFollowSuppressTimer();
+    diagnostics?.updateState?.({
+      playbackSyncEnabled: false,
+      playbackSyncStatus: "disabled",
+      playbackCurrentMs: null,
+      playbackEstimatedMs: null,
+      playbackTimerActive: false,
+      lastPlaybackSyncAt: Date.now(),
+      autoFollowSuppressedUntil: null
+    });
+  }
+
+  function isActive(requestId, songId) {
+    if (requestId !== activeRequestId) return false;
+    if (songId && currentSongId && songId !== currentSongId) return false;
+    return true;
+  }
+
+  if (root.plugin?.onLoad) {
+    root.plugin.onLoad(bootstrap);
+  } else if (root.document?.readyState === "loading") {
+    root.document.addEventListener("DOMContentLoaded", bootstrap, { once: true });
+  } else {
+    bootstrap();
+  }
+})(typeof globalThis !== "undefined" ? globalThis : window);

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LyricLens</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body data-theme="dark" data-font-size="standard">
+  <div id="root">
+    <header class="titlebar" data-tauri-drag-region>
+      <div class="brand" data-tauri-drag-region>
+        <div class="logo">L</div>
+        <div class="meta">
+          <div class="title">LyricLens</div>
+          <div class="status" id="status">等待插件连接...</div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="action" id="popin-btn" title="收回到网易云" aria-label="收回">↩</button>
+      </div>
+    </header>
+    <main class="content" id="content">
+      <div class="empty">等待插件连接...</div>
+    </main>
+    <footer class="footer" id="footer" hidden>
+      <button class="nav" id="prev-btn" aria-label="上一句">‹</button>
+      <div class="progress">
+        <div class="progress-meta">
+          <span>歌词进度</span>
+          <span id="counter">0 / 0</span>
+        </div>
+        <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+      </div>
+      <button class="nav" id="next-btn" aria-label="下一句">›</button>
+    </footer>
+  </div>
+  <script type="module" src="main.js"></script>
+</body>
+</html>

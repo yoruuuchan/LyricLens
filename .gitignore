@@ -1,0 +1,29 @@
+# Build artifacts (run `npm run build` to recreate the .plugin)
+LyricLens-*.plugin
+LyricLens-*.plugin.*
+
+# Rust / Cargo build output (companion/src-tauri/target/ is ~3+ GB)
+**/target/
+*.pdb
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+
+# Dev clutter
+_plugin_inspect/
+curl*.txt
+.reasonix/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+
+# Local config / secrets
+.env
+.env.local
+.env.*.local

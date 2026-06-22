@@ -1,0 +1,27 @@
+{
+  "manifest_version": 1,
+  "name": "LyricLens",
+  "version": "0.1.0",
+  "author": "Yoru",
+  "description": "AI lyrics learning assistant",
+  "betterncm_version": ">=0.2.5",
+  "ncm3-compatible": true,
+  "injects": {
+    "Main": [
+      { "file": "diagnostics.js" },
+      { "file": "utils.js" },
+      { "file": "cache.js" },
+      { "file": "detect.js" },
+      { "file": "lyrics.js" },
+      { "file": "api.js" },
+      { "file": "card.js" },
+      { "file": "settings.js" },
+      { "file": "sync.js" },
+      { "file": "panel.js" },
+      { "file": "styles.js" },
+      { "file": "capture.js" },
+      { "file": "bridge.js" },
+      { "file": "main.js" }
+    ]
+  }
+}

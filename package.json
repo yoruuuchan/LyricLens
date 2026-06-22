@@ -1,0 +1,10 @@
+{
+  "name": "lyriclens",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-plugin.ps1"
+  }
+}
