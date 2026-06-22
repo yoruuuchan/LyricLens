@@ -14,11 +14,11 @@
     panelFontSize: "standard",
     analyzeTimeoutMs: 60000,
     maxAnalysisLines: 80,
-    analyzeMaxTokens: 12000,
+    analyzeMaxTokens: 3000,
     analyzeTemperature: 0.2,
     fallbackOnTimeout: true,
     fallbackMaxLines: 40,
-    fallbackMaxTokens: 12000,
+    fallbackMaxTokens: 3000,
     fallbackTimeoutMs: 25000,
     cardGenerationMode: "per-line",
     responseFormatMode: "auto",
@@ -45,6 +45,13 @@
   const LEGACY_PER_LINE_FALLBACK_MAX_LINES = 12;
   const LEGACY_PER_LINE_FALLBACK_MAX_TOKENS = 1500;
   const LEGACY_PANEL_OPACITY = 0.85;
+  // Previous default tokens before the 12000→3000 reduction. Detected as
+  // "untouched previous defaults" only when every per-line knob still matches
+  // its previous default value; if the user has tweaked anything, leave alone.
+  const PREVIOUS_DEFAULT_ANALYZE_MAX_TOKENS = 12000;
+  const PREVIOUS_DEFAULT_FALLBACK_MAX_TOKENS = 12000;
+  const PREVIOUS_DEFAULT_MAX_ANALYSIS_LINES = 80;
+  const PREVIOUS_DEFAULT_FALLBACK_MAX_LINES = 40;
 
   function normalizeSettings(value) {
     const input = value && typeof value === "object" ? value : {};
@@ -60,12 +67,17 @@
       Number(input.analyzeMaxTokens) === LEGACY_PER_LINE_ANALYZE_MAX_TOKENS &&
       Number(input.fallbackMaxLines) === LEGACY_PER_LINE_FALLBACK_MAX_LINES &&
       Number(input.fallbackMaxTokens) === LEGACY_PER_LINE_FALLBACK_MAX_TOKENS;
+    const hasPreviousDefaultTokens = cardGenerationMode === "per-line" &&
+      Number(input.maxAnalysisLines) === PREVIOUS_DEFAULT_MAX_ANALYSIS_LINES &&
+      Number(input.analyzeMaxTokens) === PREVIOUS_DEFAULT_ANALYZE_MAX_TOKENS &&
+      Number(input.fallbackMaxLines) === PREVIOUS_DEFAULT_FALLBACK_MAX_LINES &&
+      Number(input.fallbackMaxTokens) === PREVIOUS_DEFAULT_FALLBACK_MAX_TOKENS;
     const normalizedMaxAnalysisLines = normalizeInteger(input.maxAnalysisLines, DEFAULT_SETTINGS.maxAnalysisLines, MIN_LINES, MAX_LINES);
     const maxAnalysisLines = cardGenerationMode === "per-line" && Number(input.maxAnalysisLines) === LEGACY_PER_LINE_MAX_ANALYSIS_LINES
       ? DEFAULT_SETTINGS.maxAnalysisLines
       : normalizedMaxAnalysisLines;
     const normalizedAnalyzeMaxTokens = normalizeInteger(input.analyzeMaxTokens, DEFAULT_SETTINGS.analyzeMaxTokens, MIN_TOKENS, MAX_TOKENS);
-    const analyzeMaxTokens = hasLegacyPerLineDefaults
+    const analyzeMaxTokens = hasLegacyPerLineDefaults || hasPreviousDefaultTokens
       ? DEFAULT_SETTINGS.analyzeMaxTokens
       : normalizedAnalyzeMaxTokens;
     const normalizedFallbackMaxLines = normalizeInteger(input.fallbackMaxLines, DEFAULT_SETTINGS.fallbackMaxLines, MIN_LINES, MAX_LINES);
@@ -73,7 +85,7 @@
       ? DEFAULT_SETTINGS.fallbackMaxLines
       : normalizedFallbackMaxLines;
     const normalizedFallbackMaxTokens = normalizeInteger(input.fallbackMaxTokens, DEFAULT_SETTINGS.fallbackMaxTokens, MIN_TOKENS, MAX_TOKENS);
-    const fallbackMaxTokens = hasLegacyPerLineDefaults
+    const fallbackMaxTokens = hasLegacyPerLineDefaults || hasPreviousDefaultTokens
       ? DEFAULT_SETTINGS.fallbackMaxTokens
       : normalizedFallbackMaxTokens;
     return {

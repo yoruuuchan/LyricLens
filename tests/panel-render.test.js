@@ -219,3 +219,93 @@ test("panel.showCard renders the card and records panel diagnostics", () => {
     delete require.cache[require.resolve("../src/panel")];
   }
 });
+
+test("background updates do not kick the user out of the open settings form", () => {
+  const previous = {
+    LyricLens: globalThis.LyricLens,
+    document: globalThis.document,
+    localStorage: globalThis.localStorage,
+    innerWidth: globalThis.innerWidth,
+    innerHeight: globalThis.innerHeight,
+    addEventListener: globalThis.addEventListener,
+    removeEventListener: globalThis.removeEventListener
+  };
+  const document = createFakeDocument();
+  globalThis.document = document;
+  globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+  globalThis.innerWidth = 1280;
+  globalThis.innerHeight = 720;
+  globalThis.addEventListener = () => {};
+  globalThis.removeEventListener = () => {};
+
+  const diagState = {};
+  globalThis.LyricLens = {
+    diagnostics: {
+      updateState: (partial) => { Object.assign(diagState, partial); },
+      getState: () => ({ ...diagState })
+    },
+    Settings: { normalizeSettings: (s) => s || {} },
+    Card: null
+  };
+
+  delete require.cache[require.resolve("../src/card")];
+  delete require.cache[require.resolve("../src/panel")];
+  require("../src/card");
+  const { createPanel } = require("../src/panel");
+
+  try {
+    const panel = createPanel({
+      settings: { panelTheme: "light", panelFontSize: "standard", panelOpacity: 0.96 },
+      isDebugEnabled: () => false,
+      getDiagnosticState: () => ({})
+    });
+
+    // Render a card first so the panel is mounted and visible.
+    const card = { index: 0, line: "Hello", translation: "你好", highlights: [] };
+    const analysis = {
+      songId: "song-1",
+      language: "en",
+      lines: [{ index: 0, text: "Hello", startTime: 1000 }],
+      cards: [card],
+      cardsByIndex: new Map([[0, card]])
+    };
+    panel.setSongId("song-1");
+    panel.showCard(analysis, 0);
+
+    // User opens settings by clicking the settings button.
+    const panelNode = document.querySelector(".ll-panel");
+    const settingsButton = panelNode.querySelector(".ll-settings-button");
+    settingsButton.eventListeners.click?.();
+
+    // Settings form is now visible.
+    assert.ok(panelNode.querySelector(".ll-settings-form"), "settings form should be rendered after click");
+    const formBefore = panelNode.querySelector(".ll-settings-form");
+
+    // Simulate background data updates that previously kicked the user out:
+    panel.setCardsState({
+      analyzeKey: "key-1",
+      cards: [card, { index: 1, line: "World", translation: "世界", highlights: [] }],
+      language: "en",
+      analysis,
+      reason: "stream-card"
+    });
+    panel.renderCardAt(0, "playback-sync");
+    panel.showLoading("正在分析当前歌词...");
+    panel.resetForAnalyze({ analyzeKey: null, reason: "song-change", message: "正在分析当前歌词..." });
+
+    // Settings form must still be in the DOM after all those background updates.
+    const formAfter = panelNode.querySelector(".ll-settings-form");
+    assert.ok(formAfter, "settings form must survive background updates");
+    assert.equal(formAfter, formBefore, "settings form DOM node must be the same instance — no rebuild");
+  } finally {
+    globalThis.LyricLens = previous.LyricLens;
+    globalThis.document = previous.document;
+    globalThis.localStorage = previous.localStorage;
+    globalThis.innerWidth = previous.innerWidth;
+    globalThis.innerHeight = previous.innerHeight;
+    globalThis.addEventListener = previous.addEventListener;
+    globalThis.removeEventListener = previous.removeEventListener;
+    delete require.cache[require.resolve("../src/card")];
+    delete require.cache[require.resolve("../src/panel")];
+  }
+});

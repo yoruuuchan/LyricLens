@@ -8,9 +8,11 @@ test("defaults use per-line card generation with full-song limits", () => {
 
   assert.equal(settings.cardGenerationMode, "per-line");
   assert.equal(settings.maxAnalysisLines, 80);
-  assert.equal(settings.analyzeMaxTokens >= 12000, true);
+  // Per-batch output is ~500-1500 tokens; 3000 leaves 2x headroom and
+  // reduces KV reserve pressure on upstream APIs.
+  assert.equal(settings.analyzeMaxTokens, 3000);
   assert.equal(settings.fallbackMaxLines >= 30, true);
-  assert.equal(settings.fallbackMaxTokens >= 12000, true);
+  assert.equal(settings.fallbackMaxTokens, 3000);
   assert.equal(DEFAULT_SETTINGS.cardGenerationMode, "per-line");
   assert.equal(settings.panelTheme, "light");
   assert.equal(settings.panelFontSize, "standard");
@@ -75,8 +77,36 @@ test("normalizeSettings migrates old per-line token and fallback defaults", () =
     fallbackMaxTokens: 1500
   });
 
-  assert.equal(settings.analyzeMaxTokens, 12000);
+  assert.equal(settings.analyzeMaxTokens, 3000);
   assert.equal(settings.fallbackMaxLines, 40);
+  assert.equal(settings.fallbackMaxTokens, 3000);
+});
+
+test("normalizeSettings migrates previous-default 12000 tokens to new 3000 default", () => {
+  const settings = normalizeSettings({
+    cardGenerationMode: "per-line",
+    maxAnalysisLines: 80,
+    analyzeMaxTokens: 12000,
+    fallbackMaxLines: 40,
+    fallbackMaxTokens: 12000
+  });
+
+  assert.equal(settings.analyzeMaxTokens, 3000);
+  assert.equal(settings.fallbackMaxTokens, 3000);
+});
+
+test("normalizeSettings preserves user-tweaked 12000 tokens if other knobs differ", () => {
+  const settings = normalizeSettings({
+    cardGenerationMode: "per-line",
+    maxAnalysisLines: 60, // user tweaked
+    analyzeMaxTokens: 12000,
+    fallbackMaxLines: 40,
+    fallbackMaxTokens: 12000
+  });
+
+  // User has touched maxAnalysisLines, so we don't assume their other values
+  // are still defaults — keep their 12000 in place.
+  assert.equal(settings.analyzeMaxTokens, 12000);
   assert.equal(settings.fallbackMaxTokens, 12000);
 });
 

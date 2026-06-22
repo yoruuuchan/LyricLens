@@ -70,6 +70,52 @@
     return Math.max(0, Math.round(numeric));
   }
 
+  // Cache for the AMLL player-time element. Walking the whole DOM every
+  // sync tick (~1Hz) would be wasteful, so we remember the node and only
+  // re-scan when it's detached or stops carrying the CSS var.
+  let amllPlayerTimeElementCache = null;
+
+  function findAmllPlayerTimeElement(context) {
+    const doc = context?.document;
+    if (!doc) return null;
+    // Validate the cached node first; if it's still in the tree AND still
+    // exposes the var, reuse it. This is the fast path.
+    if (amllPlayerTimeElementCache) {
+      try {
+        const stillAttached = doc.contains?.(amllPlayerTimeElementCache);
+        if (stillAttached) {
+          const v = amllPlayerTimeElementCache.style?.getPropertyValue?.("--amll-player-time");
+          if (v) return amllPlayerTimeElementCache;
+        }
+      } catch (_) {}
+      amllPlayerTimeElementCache = null;
+    }
+    // Fast attribute selector first.
+    try {
+      const direct = doc.querySelector?.('[style*="--amll-player-time"]');
+      if (direct) {
+        amllPlayerTimeElementCache = direct;
+        return direct;
+      }
+    } catch (_) {}
+    // Fallback: walk all elements once. Some NCM/AMLL builds set the var
+    // through CSSStyleDeclaration in a way that doesn't show up in the
+    // serialized `style` attribute, breaking the [style*=...] selector.
+    try {
+      const all = doc.querySelectorAll?.("*");
+      if (all) {
+        for (const el of all) {
+          const v = el.style?.getPropertyValue?.("--amll-player-time");
+          if (v) {
+            amllPlayerTimeElementCache = el;
+            return el;
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
   function readAmllPlayerCssTime(context = root) {
     const candidate = {
       name: "AMLL.player-css-time",
@@ -79,7 +125,7 @@
     };
     let element = null;
     try {
-      element = context?.document?.querySelector?.('[style*="--amll-player-time"]');
+      element = findAmllPlayerTimeElement(context);
     } catch (err) {
       candidate.status = "failed";
       candidate.reason = String(err?.message || err).slice(0, 120);
@@ -749,6 +795,47 @@
     }
   }
 
+  // Hook console.warn to intercept AMLL's "音乐播放进度跳变" messages.
+  // Format: "[AMLL] [WARN] 音乐播放进度跳变 <trackMarker> <prev> <const> <current>"
+  // The last number is the current playback time in seconds. This is the
+  // ONLY signal we have when AMLL fails to find TTML lyrics and stops
+  // updating --amll-player-time (its normal CSS-var channel goes dark).
+  function installAmllWarningProbe(onAmllProgress) {
+    const target = root.console;
+    if (!target || typeof target.warn !== "function") return () => {};
+    const origWarn = target.warn;
+    let installed = true;
+    const wrapped = function amllWarnProbe(...args) {
+      if (installed) {
+        try {
+          let text = "";
+          for (let i = 0; i < args.length; i += 1) {
+            const a = args[i];
+            text += (typeof a === "string" ? a : (a == null ? "" : String(a))) + " ";
+            if (text.length > 400) break;
+          }
+          const marker = text.indexOf("音乐播放进度跳变");
+          if (marker >= 0 && text.includes("[AMLL]")) {
+            const tail = text.slice(marker);
+            const nums = tail.match(/-?\d+\.?\d*/g);
+            if (nums && nums.length >= 2) {
+              const sec = parseFloat(nums[nums.length - 1]);
+              if (Number.isFinite(sec) && sec >= 0 && sec < 100000) {
+                try { onAmllProgress(Math.round(sec * 1000), args); } catch (_) {}
+              }
+            }
+          }
+        } catch (_) {}
+      }
+      return origWarn.apply(target, args);
+    };
+    target.warn = wrapped;
+    return function uninstall() {
+      installed = false;
+      if (target.warn === wrapped) target.warn = origWarn;
+    };
+  }
+
   const api = {
     normalizeProgressMs,
     getCurrentPlaybackMs,
@@ -773,7 +860,8 @@
     recordPlayStateArgs,
     getCurrentSongId,
     startSongMonitor,
-    startProgressListener
+    startProgressListener,
+    installAmllWarningProbe
   };
 
   root.LyricLens = root.LyricLens || {};

@@ -32,31 +32,75 @@
   let playbackHasRealTime = false;
   let lastProgressEventAt = 0;
   let playbackPaused = false;
+  // Track whether the trusted time source is actually advancing. When AMLL
+  // fails to find TTML for a song it stops updating --amll-player-time, but
+  // the CSS var stays in the DOM with its frozen final value. We detect
+  // freeze by remembering the last observed value and the wall-clock time
+  // at which it changed; after TRUSTED_TIME_STALE_MS we fall back to
+  // wall-clock extrapolation from playbackBaseMs.
+  let lastTrustedTimeMs = null;
+  let lastTrustedTimeChangedAt = 0;
+  const TRUSTED_TIME_STALE_MS = 1500;
+  // If AMLL hasn't pushed a new value in this long, infer paused. Normal
+  // playback updates --amll-player-time at ~10Hz, so anything beyond a
+  // few seconds is almost certainly NCM-paused, song-loading, or
+  // AMLL-stuck. Better to freeze cards than to keep extrapolating into
+  // a wildly wrong position.
+  const TRUSTED_TIME_PAUSE_INFER_MS = 5000;
   let autoFollowSuppressTimer = null;
   let domObserver = null;
   let analysisPlaybackState = null;
   let previousSongLyricsSignature = null;
+  let previousSongLyricsHash = null;
   let songChangeAt = 0;
   let lastProgressRawTrackMarker = null;
-  const PREVIOUS_SONG_LYRICS_REJECT_MS = 8000;
+  // Widened from 8000 → 12000ms because amll-state sometimes lags NCM's
+  // internal songId flip by 5-8 seconds on slower machines; the previous
+  // window expired before the new song's capture became available.
+  const PREVIOUS_SONG_LYRICS_REJECT_MS = 12000;
 
   function buildLyricsTextSignature(lines) {
     if (!Array.isArray(lines) || !lines.length) return null;
     const texts = [];
     for (const line of lines) {
-      const raw = String(line?.text ?? line?.original ?? "").trim();
+      const raw = String(line?.text ?? line?.original ?? "");
       if (!raw) continue;
-      // strip parenthesized translations / whitespace noise so amll-state
-      // (which may inline a translation) and dom-lyrics produce the same key
+      // Aggressive normalization so the same lyrics produce the same
+      // signature regardless of which capture path produced them.
+      // - <00:00.500> and (0,500) word timestamps leak through some
+      //   capture sources (amll-state / console raw items) but are
+      //   stripped by preprocessLyricLines on the analysis path.
+      // - Parenthesized inline annotations / translations sometimes
+      //   appear in one path and not the other.
+      // - Strip every non-alphanumeric character (punctuation, full-width
+      //   marks, whitespace) and lowercase the rest — the goal here is
+      //   "are these the same lyrics", not byte-equality.
       const stripped = raw
+        .replace(/<\d{1,2}:\d{2}(?:[.:]\d{1,3})?>/g, "")
+        .replace(/\(\s*\d+(?:\.\d+)?\s*[,，:]\s*\d+(?:\.\d+)?(?:\s*[,，:]\s*\d+)?\s*\)/g, "")
         .replace(/[（(][^）)]*[）)]/g, "")
-        .replace(/\s+/g, " ")
-        .trim();
+        .replace(/[^\p{L}\p{N}]/gu, "")
+        .toLowerCase();
       if (stripped) texts.push(stripped);
       if (texts.length >= 30) break;
     }
     if (!texts.length) return null;
-    return `${texts.length}|${texts.join("\n")}`;
+    return `${texts.length}|${texts.join("|")}`;
+  }
+
+  // Compute a precise FNV-1a hash over preprocessed lyric lines. Falls back
+  // to null if the lines can't be preprocessed (no Lyrics module / empty
+  // input). Used as a second stale-capture defense alongside the loose
+  // signature above.
+  function buildPreprocessedLyricsHash(lines) {
+    if (!Array.isArray(lines) || !lines.length) return null;
+    try {
+      const preprocessed = Lyrics?.preprocessLyricLines?.(lines);
+      if (!Array.isArray(preprocessed) || !preprocessed.length) return null;
+      return Lyrics?.lyricsHash?.(preprocessed) || null;
+    } catch (_) {
+      return null;
+    }
   }
   const AUTO_FOLLOW_SUPPRESS_MS = 3000;
   let lastPromotedConsoleSongId = null;
@@ -144,6 +188,19 @@
     }
     Sync.startProgressListener(handleProgress, diagnostics);
     Sync.startSongMonitor(handleSongChange, handlePlayState, diagnostics);
+    // AMLL's "音乐播放进度跳变" warnings carry a time argument, but in
+    // practice it isn't reliable as a playback anchor — it can be the
+    // jump target rather than the current position (e.g. "0 1 208.233"
+    // fires the instant a song loads). Wire the probe for diagnostics
+    // only; the wall-clock fallback in readPlaybackTimeSnapshot uses
+    // songChangeAt as the t=0 reference instead, which over-estimates
+    // less when the warning value is wrong.
+    Sync.installAmllWarningProbe?.((timeMs, args) => {
+      diagnostics?.updateState?.({
+        lastAmllWarningTimeMs: timeMs,
+        lastAmllWarningAt: Date.now()
+      });
+    });
   }
 
   const handleRuntimeLyricsCapturedDebounced = Utils.debounce((detail) => {
@@ -168,6 +225,92 @@
     if (songId && suppressedSongId === songId) {
       diagnostics?.updateState?.({ analysisSkippedReason: "suppressed" });
       return;
+    }
+
+    // ── Implicit song-change detection ──
+    // On NCM builds where PlayState/PlayProgress events don't fire and
+    // betterncm.ncm.getPlaying() throws (observed on at least one user's
+    // setup), handleSongChange never runs. The capture content itself is
+    // then the only reliable signal: if the new lyrics fingerprint differs
+    // from the analysis we're displaying, treat it as a song change and
+    // clear stale analysis state so the new lyrics get a fresh run.
+    if (currentAnalysis?.lines?.length) {
+      const candidate = payload.lines.map((l) => ({
+        text: l.original ?? l.text,
+        startTime: l.startMs,
+        endTime: l.endMs
+      }));
+      const candidateSig = buildLyricsTextSignature(candidate);
+      const currentSig = buildLyricsTextSignature(currentAnalysis.lines);
+      const sigDiffers = Boolean(candidateSig) && Boolean(currentSig) && candidateSig !== currentSig;
+      let needsReset = sigDiffers;
+      if (!needsReset && candidateSig && currentSig) {
+        // Signatures match. Double-check with the precise hash to catch the
+        // rare case where the loose signature collapses two different lyrics.
+        const candHash = buildPreprocessedLyricsHash(candidate);
+        const curHash = Lyrics.lyricsHash?.(currentAnalysis.lines);
+        needsReset = Boolean(candHash) && Boolean(curHash) && candHash !== curHash;
+      }
+      if (needsReset) {
+        console.log("[LyricLens:song-change-from-capture]", {
+          source,
+          from: currentSongId,
+          prevSigHead: currentSig ? currentSig.slice(0, 40) : null,
+          nextSigHead: candidateSig ? candidateSig.slice(0, 40) : null
+        });
+        softResetForNewLyrics({ reason: "capture-lyrics-changed" });
+        // currentSongId may still be stale (we couldn't refresh it without a
+        // working PlayState/PlayProgress signal), so cacheKey uses the same
+        // songId + new lyricsHash — that's a fresh key, cache miss, fresh
+        // analysis. The displayedAnalyzeKey will track this new key.
+      }
+    }
+
+    // ── Grace-window stale-capture drop ──
+    // Within PREVIOUS_SONG_LYRICS_REJECT_MS of a song change, drop captures
+    // whose lines match the previous song. amll-state / console / DOM all
+    // lag NCM's internal songId flip, so a's lyrics can arrive after
+    // handleSongChange has set currentSongId = b and get attributed to b —
+    // that's the "切歌但卡片不变" bug.
+    //
+    // Two-layer fingerprint: signature (loose, format-tolerant) catches
+    // amll-state ↔ analysis path drift; lyricsHash (exact, on preprocessed
+    // text) catches anything the signature missed.
+    if ((previousSongLyricsSignature || previousSongLyricsHash)
+        && Date.now() - songChangeAt < PREVIOUS_SONG_LYRICS_REJECT_MS) {
+      const candidateLines = payload.lines.map((l) => ({
+        text: l.original ?? l.text,
+        startTime: l.startMs,
+        endTime: l.endMs
+      }));
+      const candidateSig = buildLyricsTextSignature(candidateLines);
+      const candidateHash = buildPreprocessedLyricsHash(candidateLines);
+      const sigMatch = Boolean(candidateSig) && candidateSig === previousSongLyricsSignature;
+      const hashMatch = Boolean(candidateHash) && candidateHash === previousSongLyricsHash;
+      if (sigMatch || hashMatch) {
+        diagnostics?.updateState?.({
+          analysisSkippedReason: "previous-song-capture-in-grace-window",
+          analyzeTriggerBlockedReason: "previous-song-capture-in-grace-window",
+          staleLyricsRejectedAt: Date.now(),
+          staleLyricsRejectedSource: source,
+          staleLyricsRejectedBy: sigMatch && hashMatch ? "sig+hash" : (sigMatch ? "sig" : "hash"),
+          staleLyricsPrevSigSample: previousSongLyricsSignature ? previousSongLyricsSignature.slice(0, 100) : null,
+          staleLyricsCandidateSigSample: candidateSig ? candidateSig.slice(0, 100) : null,
+          staleLyricsPrevHash: previousSongLyricsHash || null,
+          staleLyricsCandidateHash: candidateHash || null
+        });
+        return;
+      }
+      // Record near-miss diagnostics so a future "bug still happens" report
+      // tells us whether the grace window saw the stale capture at all.
+      diagnostics?.updateState?.({
+        lastStaleCheckPassedAt: Date.now(),
+        lastStaleCheckSource: source,
+        lastStaleCheckPrevSigSample: previousSongLyricsSignature ? previousSongLyricsSignature.slice(0, 100) : null,
+        lastStaleCheckCandidateSigSample: candidateSig ? candidateSig.slice(0, 100) : null,
+        lastStaleCheckPrevHash: previousSongLyricsHash || null,
+        lastStaleCheckCandidateHash: candidateHash || null
+      });
     }
 
     // ── Arbitration: low-quality DOM must not override active capture ──
@@ -630,15 +773,93 @@
     activeRequestId += 1;
   }
 
+  // Reset analysis state without touching the capture buffer or currentSongId.
+  // Used when handleCapturePayload detects a content-level song change
+  // (NCM builds where PlayState/PlayProgress events don't fire never reach
+  // handleSongChange; the only reliable signal is "the lyrics text changed").
+  // Caller will continue with the new capture, so we deliberately do NOT
+  // call Lyrics.clearCapturedLyrics() or restart the DOM observer.
+  function softResetForNewLyrics({ reason } = {}) {
+    const prevAnalysisLines = currentAnalysis?.lines;
+    const analysisSig = buildLyricsTextSignature(prevAnalysisLines);
+    const prevHash = Array.isArray(prevAnalysisLines) && prevAnalysisLines.length
+      ? (Lyrics.lyricsHash?.(prevAnalysisLines) || null)
+      : null;
+    previousSongLyricsSignature = analysisSig || null;
+    previousSongLyricsHash = prevHash || null;
+    songChangeAt = Date.now();
+    // Reset wall-clock anchor — the new song's playback time starts fresh.
+    // NOTE: keep lastTrustedTimeMs intact (don't null it) so the next read
+    // can distinguish "AMLL pushed a new value for the new song" (value
+    // changed → real anchor) from "AMLL is still frozen on the previous
+    // song's tail" (value unchanged → use songChangeAt-based extrapolation).
+    playbackBaseMs = 0;
+    playbackBaseWallClock = 0;
+    currentAnalysis = null;
+    lastLineIndex = null;
+    currentAnalyzeKey = null;
+    displayedAnalyzeKey = null;
+    currentCardOrdinal = 0;
+    lastSettledAnalyzeKey = null;
+    lastSettledAnalyzeStatus = null;
+    lastSettledAt = 0;
+    lyricsFingerprintToCanonicalKey.clear();
+    keyAliasMap.clear();
+    canonicalToProvisionalKeys.clear();
+    clearWatchdog();
+    stopPlaybackSyncLoop();
+    clearAutoFollowSuppressTimer();
+    lastPromotedConsoleSongId = null;
+    abortActiveRequest({ reason: reason || "soft-reset" });
+    if (panel?.setAutoFollow) panel.setAutoFollow(true);
+    panel?.resetForAnalyze?.({
+      analyzeKey: null,
+      reason: reason || "soft-reset",
+      message: "正在分析当前歌词..."
+    });
+    diagnostics?.updateState?.({
+      lastSongChangeAt: Date.now(),
+      lastPanelResetReason: reason || "soft-reset",
+      cardCount: 0,
+      currentCardIndex: null,
+      displayedAnalyzeKey: null,
+      displayedCardCount: 0,
+      apiStatus: "idle",
+      analyzeTriggerStatus: "pending",
+      softResetCount: (diagnostics?.getState?.()?.softResetCount || 0) + 1,
+      lastSoftResetReason: reason || "soft-reset",
+      lastSoftResetAt: Date.now()
+    });
+  }
+
   function handleSongChange(songId) {
     if (!songId) return;
     if (currentSongId !== songId) {
-      // Snapshot the previous song's lyrics text signature so we can reject
-      // stale captures (amll-state / console may hold prior song's lyrics
-      // for a few hundred ms after the songId flips). We use a text-only
-      // signature so format differences between sources (inline translation,
-      // whitespace, etc.) don't let stale lyrics slip through.
-      previousSongLyricsSignature = buildLyricsTextSignature(currentAnalysis?.lines) || null;
+      // Snapshot the previous song's lyrics text signature AND a precise
+      // FNV-1a hash over its preprocessed lines so we can reject stale
+      // captures from amll-state / console (which lag NCM's songId flip).
+      // We keep two fingerprints because formatting between capture paths
+      // and analysis paths sometimes disagrees: signature is loose and
+      // tolerates format drift, hash is exact and catches the rest.
+      // Prefer the analyzed lines; fall back to the last captured lines
+      // when the previous song never reached setAnalysis.
+      const prevAnalysisLines = currentAnalysis?.lines;
+      const analysisSig = buildLyricsTextSignature(prevAnalysisLines);
+      let prevHash = Array.isArray(prevAnalysisLines) && prevAnalysisLines.length
+        ? (Lyrics.lyricsHash?.(prevAnalysisLines) || null)
+        : null;
+      let captureSigFallback = null;
+      if (!analysisSig || !prevHash) {
+        try {
+          const prevCaptured = Lyrics.getLastCapturedLyrics?.();
+          if (Array.isArray(prevCaptured) && prevCaptured.length) {
+            if (!analysisSig) captureSigFallback = buildLyricsTextSignature(prevCaptured);
+            if (!prevHash) prevHash = buildPreprocessedLyricsHash(prevCaptured);
+          }
+        } catch (_) {}
+      }
+      previousSongLyricsSignature = analysisSig || captureSigFallback || null;
+      previousSongLyricsHash = prevHash || null;
       songChangeAt = Date.now();
       console.log("[LyricLens:song-change]", { from: currentSongId, to: songId, hasPrevSig: Boolean(previousSongLyricsSignature) });
       suppressedSongId = null;
@@ -650,6 +871,11 @@
       lastSettledAnalyzeKey = null;
       lastSettledAnalyzeStatus = null;
       lastSettledAt = 0;
+      // Reset wall-clock anchor on song change. Keep lastTrustedTimeMs
+      // so the next read can detect whether AMLL pushed a new value for
+      // the new song (real anchor) vs left it frozen (use songChangeAt).
+      playbackBaseMs = 0;
+      playbackBaseWallClock = 0;
       lyricsFingerprintToCanonicalKey.clear();
       Lyrics.clearCapturedLyrics?.();
       try {
@@ -791,21 +1017,29 @@
     if (!lyricResult) {
       const captureResult = await Capture.waitForCapture?.(root, {
         songId: songId || null,
-        maxWaitMs: 8000,
+        maxWaitMs: 12000,
         pollMs: 400,
         signal: activeController?.signal,
         // Reject captures that still hold the previous song's lyrics. Keeps
         // waitForCapture polling until amll-state / console source catches up
         // to the new song, instead of returning the stale result on the first
-        // poll. The reject window matches PREVIOUS_SONG_LYRICS_REJECT_MS.
+        // poll. Uses both loose signature (catches format drift between
+        // capture and analysis paths) and precise hash (catches anything
+        // signature missed). Window matches PREVIOUS_SONG_LYRICS_REJECT_MS.
         isStaleLines: (lines) => {
-          if (!previousSongLyricsSignature) return false;
+          if (!previousSongLyricsSignature && !previousSongLyricsHash) return false;
           if (Date.now() - songChangeAt >= PREVIOUS_SONG_LYRICS_REJECT_MS) return false;
           if (!Array.isArray(lines) || !lines.length) return false;
-          const candidateSig = buildLyricsTextSignature(
-            lines.map((l) => ({ text: l.original ?? l.text }))
-          );
-          return Boolean(candidateSig) && candidateSig === previousSongLyricsSignature;
+          const candidate = lines.map((l) => ({
+            text: l.original ?? l.text,
+            startTime: l.startMs,
+            endTime: l.endMs
+          }));
+          const candidateSig = buildLyricsTextSignature(candidate);
+          if (candidateSig && candidateSig === previousSongLyricsSignature) return true;
+          const candidateHash = buildPreprocessedLyricsHash(candidate);
+          if (candidateHash && candidateHash === previousSongLyricsHash) return true;
+          return false;
         }
       });
       if (captureResult) {
@@ -921,19 +1155,31 @@
     const lyricsHash = Lyrics.lyricsHash(lines);
     const currentLyricsSignature = buildLyricsTextSignature(lines);
     if (!forceRefresh
-        && previousSongLyricsSignature
-        && currentLyricsSignature
-        && currentLyricsSignature === previousSongLyricsSignature
+        && (previousSongLyricsSignature || previousSongLyricsHash)
         && Date.now() - songChangeAt < PREVIOUS_SONG_LYRICS_REJECT_MS) {
-      console.log("[LyricLens:stale-reject]", { source: lyricResult.source, songId, sigPreview: currentLyricsSignature.slice(0, 80) });
-      diagnostics?.updateState?.({
-        analysisSkippedReason: "previous-song-lyrics-stale",
-        analyzeTriggerBlockedReason: "previous-song-lyrics-stale",
-        analyzeTriggerStatus: "blocked-stale-lyrics",
-        staleLyricsRejectedAt: Date.now(),
-        staleLyricsRejectedSource: lyricResult.source
-      });
-      return;
+      const sigMatch = Boolean(currentLyricsSignature) && currentLyricsSignature === previousSongLyricsSignature;
+      const hashMatch = Boolean(lyricsHash) && lyricsHash === previousSongLyricsHash;
+      if (sigMatch || hashMatch) {
+        console.log("[LyricLens:stale-reject]", {
+          source: lyricResult.source,
+          songId,
+          by: sigMatch && hashMatch ? "sig+hash" : (sigMatch ? "sig" : "hash"),
+          sigPreview: currentLyricsSignature ? currentLyricsSignature.slice(0, 80) : null
+        });
+        diagnostics?.updateState?.({
+          analysisSkippedReason: "previous-song-lyrics-stale",
+          analyzeTriggerBlockedReason: "previous-song-lyrics-stale",
+          analyzeTriggerStatus: "blocked-stale-lyrics",
+          staleLyricsRejectedAt: Date.now(),
+          staleLyricsRejectedSource: lyricResult.source,
+          staleLyricsRejectedBy: sigMatch && hashMatch ? "sig+hash" : (sigMatch ? "sig" : "hash"),
+          staleLyricsPrevSigSample: previousSongLyricsSignature ? previousSongLyricsSignature.slice(0, 100) : null,
+          staleLyricsCandidateSigSample: currentLyricsSignature ? currentLyricsSignature.slice(0, 100) : null,
+          staleLyricsPrevHash: previousSongLyricsHash || null,
+          staleLyricsCandidateHash: lyricsHash || null
+        });
+        return;
+      }
     }
     const fingerprint = captureFingerprint || (capturePayload ? Lyrics.fingerprintCapturedLyrics?.(capturePayload) : null);
     // Belt-and-suspenders: normalize songId to pure digits (strips track-/song- prefix)
@@ -1034,13 +1280,55 @@
       lastSettledAt = 0;
     }
 
-    // G5: cache hit for non-settled case
+    // G5: cache hit for non-settled case → serve cards from cache, skip API.
+    // Without this, every song-switch re-runs the API even when we already
+    // analyzed these exact lyrics this session — or in a prior session,
+    // since the cache is persisted to localStorage.
     if (!forceRefresh && Cache.defaultCache.has(canonicalKey)) {
-      Utils.log("内存缓存命中但不作为当前捕获结果", canonicalKey);
+      const cached = Cache.defaultCache.get(canonicalKey);
+      if (Array.isArray(cached) && cached.length > 0) {
+        const sortedCards = sortCards(cached, lines);
+        const coverage = validateCardCoverage(sortedCards, lines, cardGenerationMode);
+        const status = coverage.partialCardGeneration ? "success-with-missing" : "success";
+        Utils.log("内存缓存命中，直接使用", canonicalKey, { cards: sortedCards.length });
+        // Make sure any prior in-flight (from the song we just switched off)
+        // is aborted so its delayed completion can't overwrite us.
+        abortActiveRequest({ reason: "served-from-cache", silentDiagnostics: true });
+        clearWatchdog();
+        inFlightAnalyzeKey = null;
+        lastAnalyzedKey = canonicalKey;
+        currentAnalyzeKey = canonicalKey;
+        settleAnalyzeKey(canonicalKey, "success");
+        diagnostics?.updateState?.({
+          apiStatus: status,
+          analyzeTriggerStatus: "success",
+          cardCount: sortedCards.length,
+          cacheHit: true,
+          cacheKey: canonicalKey,
+          cacheUseStatus: "served-from-cache",
+          inFlightAnalyzeKey: null,
+          lastError: null,
+          panelStatus: status,
+          expectedCardCount: coverage.expectedCardCount,
+          actualCardCount: coverage.actualCardCount,
+          missingCardLineIndexes: coverage.missingCardLineIndexes,
+          partialCardGeneration: coverage.partialCardGeneration,
+          analyzeMergedCardCount: sortedCards.length,
+          canonicalAnalyzeKey: canonicalKey,
+          currentAnalyzeKey: canonicalKey,
+          panelLastRenderReason: "cache-hit",
+          panelLastRenderedAt: Date.now()
+        });
+        setAnalysis({ songId: cacheKeySongId, lyricsHash, language, lines, cards: sortedCards, analyzeKey: canonicalKey });
+        lastLyricsHash = lyricsHash;
+        return;
+      }
+      Utils.log("内存缓存命中但值无效，重新请求", canonicalKey);
+      Cache.defaultCache.delete(canonicalKey);
       diagnostics?.updateState?.({
         cacheHit: true,
         cacheKey: canonicalKey,
-        cacheUseStatus: "diagnostic-only"
+        cacheUseStatus: "hit-empty-value-refetch"
       });
     }
 
@@ -1624,12 +1912,48 @@
       const { batch, originalIndex } = orderedBatches[i];
       const formattedLyrics = Lyrics.formatLinesForPrompt(batch, { detailed: cardGenerationMode === "per-line" });
       startedBatchCount += 1;
+      // Initialize slot before the request so streamed cards can accumulate.
+      batchResults[i] = batchResults[i] || { report: null, cards: [], originalIndex };
+      const slot = batchResults[i];
       diagnostics?.updateState?.({
         analyzeBatchIndex: i + 1,
         analyzeBatchSize: batch.length,
         analyzeBatchOriginalIndex: originalIndex,
         analyzeStartedBatchCount: startedBatchCount
       });
+
+      function emitCumulativePartial(reason) {
+        if (typeof onPartialBatch !== "function") return;
+        const cumulative = batchResults.flatMap((result) => result?.cards || []);
+        if (!cumulative.length) return;
+        try {
+          onPartialBatch({
+            cards: cumulative,
+            batchIndex: i,
+            totalBatches: orderedBatches.length,
+            batchOriginalIndex: originalIndex,
+            reason
+          });
+        } catch (err) {
+          Utils.warn?.("onPartialBatch 回调失败", err);
+        }
+      }
+
+      // Streaming per-card handler — runs per card as the model emits them.
+      function handleStreamCard(rawCard) {
+        if (cardGenerationMode !== "per-line") return;
+        if (!rawCard || typeof rawCard !== "object") return;
+        const singleReport = Api.normalizeCardsWithReport
+          ? Api.normalizeCardsWithReport({ cards: [rawCard] }, batch)
+          : { cards: Api.normalizeCards({ cards: [rawCard] }, batch) };
+        if (!singleReport.cards.length) return;
+        const newCard = singleReport.cards[0];
+        const newIdx = newCard.lineIndex ?? newCard.index;
+        if (slot.cards.some((c) => (c.lineIndex ?? c.index) === newIdx)) return;
+        slot.cards.push(newCard);
+        emitCumulativePartial("stream-card");
+      }
+
       const parsed = await Api.requestAnalysis({
         apiEndpoint: settings.apiEndpoint.trim(),
         apiKey: settings.apiKey.trim(),
@@ -1643,12 +1967,17 @@
         responseFormatMode: settings.responseFormatMode,
         isFallback,
         cardGenerationMode,
-        signal: batchController.signal
+        signal: batchController.signal,
+        onStreamCard: cardGenerationMode === "per-line" ? handleStreamCard : undefined
       });
       const report = Api.normalizeCardsWithReport
         ? Api.normalizeCardsWithReport(parsed, batch)
         : { cards: Api.normalizeCards(parsed, batch), parsedCount: 0, normalizedCount: 0, dropReasons: null };
-      batchResults[i] = { report, cards: report.cards, originalIndex };
+      slot.report = report;
+      // Final reconciliation: replace any streamed-card view with the
+      // authoritative normalized set (picks up cards the stream parser
+      // may have missed due to JSON edge cases, drops any spurious ones).
+      slot.cards = report.cards;
       completedBatchCount += 1;
       const partialCards = batchResults.flatMap((result) => result?.cards || []);
       diagnostics?.updateState?.({
@@ -1663,7 +1992,8 @@
             cards: partialCards,
             batchIndex: i,
             totalBatches: orderedBatches.length,
-            batchOriginalIndex: originalIndex
+            batchOriginalIndex: originalIndex,
+            reason: "batch-complete"
           });
         } catch (err) {
           Utils.warn?.("onPartialBatch 回调失败", err);
@@ -1830,10 +2160,34 @@
 
   function setAnalysis({ songId, lyricsHash, language, lines, cards, analyzeKey }) {
     const cardsByIndex = new Map(cards.map((card) => [card.index, card]));
+    // Remember which lyric LINE we were showing — not the ordinal, which is
+    // unstable while streaming inserts more cards. Without this, streaming
+    // partials cause panel to flicker between unrelated lyric lines because
+    // each new card with a smaller lineIndex becomes the new cards[0].
+    const prevCards = currentAnalysis?.cards;
+    const prevDisplayedLineIndex = Array.isArray(prevCards) && prevCards[currentCardOrdinal]
+      ? (prevCards[currentCardOrdinal].lineIndex ?? prevCards[currentCardOrdinal].index ?? null)
+      : null;
+    const prevDisplayedAnalyzeKey = currentAnalysis?.analyzeKey;
     currentAnalysis = { songId, lyricsHash, language, lines, cards, cardsByIndex, analyzeKey };
     displayedAnalyzeKey = analyzeKey || null;
     currentAnalyzeKey = analyzeKey || currentAnalyzeKey;
-    currentCardOrdinal = selectOrdinalForCurrentTime(cards);
+
+    const snapshot = readPlaybackTimeSnapshot();
+    if (snapshot && Sync.selectCardByPlaybackTime) {
+      // Playback time available — pick by time as before.
+      const idx = Sync.selectCardByPlaybackTime(snapshot.timeMs, cards);
+      currentCardOrdinal = Number.isInteger(idx) ? idx : 0;
+    } else if (prevDisplayedLineIndex != null && prevDisplayedAnalyzeKey === analyzeKey) {
+      // No playback time AND same analysis (i.e. this is a streaming
+      // partial update for the same song) — re-find the line we were on
+      // so the panel stays anchored. If the prior line isn't in the new
+      // card set, fall back to 0.
+      const found = cards.findIndex((c) => (c.lineIndex ?? c.index) === prevDisplayedLineIndex);
+      currentCardOrdinal = found >= 0 ? found : 0;
+    } else {
+      currentCardOrdinal = 0;
+    }
     const currentCard = cards[currentCardOrdinal] || null;
     diagnostics?.updateState?.({
       cardCount: cards.length,
@@ -1940,8 +2294,12 @@
     lastProgressMs = timeMs;
     playbackHasRealTime = true;
     lastProgressEventAt = Date.now();
-    playbackBaseWallClock = 0;
+    playbackBaseWallClock = Date.now();
     playbackBaseMs = timeMs;
+    // Also reset the trusted-time freeze tracker so wall-clock fallback
+    // anchors here.
+    lastTrustedTimeMs = timeMs;
+    lastTrustedTimeChangedAt = Date.now();
     if (analysisPlaybackState) analysisPlaybackState.currentMs = timeMs;
     // Determine sync quality: PlayProgress is firing, but is PlayState also available?
     const playStateEvents = diagnostics?.getState?.()?.playStateEventCount || 0;
@@ -2012,8 +2370,79 @@
     if (playbackPaused && playbackHasRealTime) {
       return { timeMs: playbackBaseMs, status: "paused" };
     }
+    const now = Date.now();
     const trustedSnapshot = readTrustedPlaybackSnapshot();
-    if (trustedSnapshot) return trustedSnapshot;
+    if (trustedSnapshot && Number.isFinite(Number(trustedSnapshot.timeMs))) {
+      const t = Number(trustedSnapshot.timeMs);
+      // Heuristic pause detection: AMLL writes --amll-player-time=0 when
+      // playback is paused, when a song is loading, or during song
+      // transitions. NCM's PlayState events are dead in this build so we
+      // can't detect pause directly — we infer it from the CSS var
+      // dropping to 0 after we've seen a positive anchor. Freeze cards
+      // at the last anchored position; if playback truly resumes, AMLL
+      // will push a fresh positive value and we'll re-anchor.
+      const hadPositiveAnchor = lastTrustedTimeMs != null && lastTrustedTimeMs > 0;
+      if (t === 0 && hadPositiveAnchor) {
+        return { timeMs: playbackBaseMs, status: "paused-inferred" };
+      }
+      // Compare against the value remembered from BEFORE the last song
+      // change. If it's different now, AMLL pushed a new real value
+      // (either because the song is playing normally and the var is
+      // ticking, or because NCM seeded AMLL with the resume position
+      // even though AMLL can't actually tick). Either way: trust it
+      // as a wall-clock anchor.
+      // If it equals the prev-song frozen tail, AMLL never updated for
+      // this song — fall through to the wall-clock-from-songChangeAt
+      // path so we at least extrapolate from 0 instead of anchoring on
+      // a wildly wrong value.
+      if (lastTrustedTimeMs !== t) {
+        lastTrustedTimeMs = t;
+        lastTrustedTimeChangedAt = now;
+        playbackBaseMs = t;
+        playbackBaseWallClock = now;
+        diagnostics?.updateState?.({ timeSourceFailureReason: null });
+        return trustedSnapshot;
+      }
+      const frozenForMs = now - lastTrustedTimeChangedAt;
+      diagnostics?.updateState?.({
+        trustedFrozenForMs: frozenForMs,
+        trustedAnchorBaseMs: playbackBaseMs,
+        trustedAnchorWallClock: playbackBaseWallClock
+      });
+      if (frozenForMs < TRUSTED_TIME_STALE_MS) return trustedSnapshot;
+      // The pause-infer path only makes sense when we actually anchored
+      // on this song. Without an anchor (playbackBaseWallClock === 0)
+      // the song is still in the "AMLL has the previous song's frozen
+      // tail" state, so freezing on baseMs=0 would be wrong — fall
+      // through to the songChangeAt extrapolation below.
+      if (frozenForMs >= TRUSTED_TIME_PAUSE_INFER_MS && playbackBaseWallClock > 0) {
+        return { timeMs: playbackBaseMs, status: "paused-inferred" };
+      }
+      // Trusted time frozen briefly (or longer but without any real
+      // anchor) — wall-clock fallback from the anchor if we have one.
+      if (playbackBaseWallClock > 0) {
+        return {
+          timeMs: playbackBaseMs + (now - playbackBaseWallClock),
+          status: "wall-clock-estimated"
+        };
+      }
+      // No prior anchor exists at all — extrapolate from song change.
+      // Best-effort: assumes the user started the song from the beginning.
+      if (songChangeAt > 0) {
+        return {
+          timeMs: Math.max(0, now - songChangeAt),
+          status: "wall-clock-estimated"
+        };
+      }
+      return trustedSnapshot;
+    }
+    if (playbackHasRealTime && playbackBaseWallClock > 0) {
+      diagnostics?.updateState?.({ timeSourceFailureReason: null });
+      return {
+        timeMs: playbackBaseMs + (now - playbackBaseWallClock),
+        status: "wall-clock-estimated"
+      };
+    }
     if (playbackHasRealTime) {
       diagnostics?.updateState?.({ timeSourceFailureReason: null });
       return { timeMs: playbackBaseMs, status: "real-time-source" };

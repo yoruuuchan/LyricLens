@@ -453,22 +453,29 @@
       render();
     }
 
+    // Background-driven render: keep the DOM as-is while the user is
+    // editing settings. Otherwise streaming/sync events rebuild the panel
+    // many times per second, which both wipes the form's in-flight values
+    // and yanks the user out of the settings view.
+    function renderBackground() {
+      if (settingsOpen) return;
+      render();
+    }
+
     function showLoading(nextMessage) {
       mode = "loading";
       message = nextMessage || "正在拆解歌词...";
-      settingsOpen = false;
       stateController.showStatus("loading", message, "loading");
       ensureVisible();
-      render();
+      renderBackground();
     }
 
     function showError(nextMessage) {
       mode = "error";
       message = nextMessage || "拆解失败，点击重试";
-      settingsOpen = false;
       stateController.showStatus("error", message, "error");
       ensureVisible();
-      render();
+      renderBackground();
     }
 
     function showCard(analysis, lineIndex) {
@@ -498,9 +505,8 @@
         stateController.setCurrentIndex(ordinal, "show-card");
       }
       mode = "card";
-      settingsOpen = false;
       ensureVisible();
-      render();
+      renderBackground();
     }
 
     function resetForAnalyze(payload = {}) {
@@ -508,10 +514,9 @@
       currentLineIndex = null;
       mode = "loading";
       message = payload.message || "正在分析当前歌词...";
-      settingsOpen = false;
       stateController.resetForAnalyze(payload.analyzeKey, payload.reason || "analyze-key-changed");
       ensureVisible();
-      render();
+      renderBackground();
     }
 
     function setCardsState(payload = {}) {
@@ -520,11 +525,10 @@
         cards: payload.cards || []
       };
       mode = "card";
-      settingsOpen = false;
       const card = stateController.setCards(payload);
       currentLineIndex = card?.lineIndex ?? card?.index ?? null;
       ensureVisible();
-      render();
+      renderBackground();
     }
 
     function renderCardAt(index, reason = "render-card-at") {
@@ -532,7 +536,7 @@
       currentLineIndex = card?.lineIndex ?? card?.index ?? null;
       mode = "card";
       ensureVisible();
-      render();
+      renderBackground();
     }
 
     function ensureVisible() {

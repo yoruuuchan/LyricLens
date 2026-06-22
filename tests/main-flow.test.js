@@ -956,7 +956,11 @@ test("playback sync does not advance from local estimate without a real time sou
   }
 });
 
-test("playback sync does not advance from wall-clock estimate after one PlayProgress event", async () => {
+test("playback sync extrapolates via wall-clock after a PlayProgress anchor", async () => {
+  // Necessary so cards keep advancing when AMLL stalls updating
+  // --amll-player-time mid-song (e.g. when AMLL can't find TTML). With
+  // an anchor from any progress source (PlayProgress, AMLL warning, etc.)
+  // we extrapolate using wall-clock elapsed.
   const scn = buildScenario();
   try {
     await scn.getBootstrap()();
@@ -971,14 +975,13 @@ test("playback sync does not advance from wall-clock estimate after one PlayProg
     let state = scn.LL.diagnostics.getState();
     assert.equal(state.currentCardIndex, 0);
     assert.equal(state.playbackCurrentMs, 50);
-    assert.equal(state.playbackEstimatedMs, null);
 
     await wait(650);
 
     state = scn.LL.diagnostics.getState();
-    assert.equal(state.currentCardIndex, 0, "must wait for a new trusted progress event");
-    assert.equal(state.playbackCurrentMs, 50);
-    assert.equal(state.playbackEstimatedMs, null);
+    // After ~650ms wall-clock elapsed from baseMs=50, we should be ~700ms
+    // which is past the 4th card's start (400ms) — last available card.
+    assert.equal(state.currentCardIndex, 4, "wall-clock extrapolation must advance past anchor");
   } finally {
     scn.restore();
   }
@@ -1099,6 +1102,32 @@ test("readTrustedPlaybackTime accepts AMLL player css time as a trusted source",
     trusted: true,
     source: "--amll-player-time"
   });
+});
+
+test("readTrustedPlaybackTime falls back to walking all elements when attribute selector misses", () => {
+  // Some NCM/AMLL builds set --amll-player-time via CSSStyleDeclaration
+  // in a way that doesn't show up in the serialized style attribute, so
+  // [style*="--amll-player-time"] returns nothing. We must still find the
+  // element by scanning all nodes.
+  const Sync = require("../src/sync");
+  const realElement = {
+    style: { getPropertyValue: (n) => n === "--amll-player-time" ? "42050" : "" }
+  };
+  const otherElement = { style: { getPropertyValue: () => "" } };
+  const fakeContext = {
+    document: {
+      querySelector: () => null, // [style*=...] returns nothing
+      querySelectorAll: (sel) => sel === "*" ? [otherElement, realElement] : [],
+      contains: () => false
+    },
+    betterncm: { ncm: {} }
+  };
+
+  const result = Sync.readTrustedPlaybackTime(fakeContext);
+  assert.equal(result.timeMs, 42050);
+  assert.equal(result.source, "AMLL.player-css-time");
+  const amll = result.candidates.find((c) => c?.name === "AMLL.player-css-time");
+  assert.equal(amll.status, "available");
 });
 
 test("readTrustedPlaybackTime rejects invalid AMLL css time without using DOM audio", () => {
@@ -1899,4 +1928,51 @@ test("testAnalyzeSpeed with mock fetch returns speed test result", async () => {
   assert.ok(result.speedTestPromptCharCount > 0);
   assert.deepEqual(result.speedTestTokens, { prompt: 10, completion: 5, total: 15 });
   assert.equal(result.speedTestThinkingMode, "off");
+});
+
+test("a→b→a switch: returning to a song served from cache, no extra fetch", async () => {
+  const scn = buildScenario();
+  try {
+    await scn.getBootstrap()();
+    scn.setFetchResponse(({ init }) => {
+      const body = JSON.parse(init.body);
+      const isAlt = JSON.stringify(body).includes("Dreams of yesterday");
+      return scn.chatCompletionResponseFor([
+        { index: 0, line: isAlt ? "Dreams of yesterday haunt me" : "Stay with me", translation: isAlt ? "昨日的梦缠绕着我" : "留下来陪我", highlights: [] }
+      ]);
+    });
+
+    const isSuccessish = (status) => status === "success" || status === "success-with-missing";
+
+    // First exposure to song A → API call #1, cards cached.
+    installFakeConsoleCapture(scn, englishLyricsPayload);
+    await wait(30);
+    assert.equal(scn.fetchCalls.length, 1, "first A capture must fire one fetch");
+    const stateA = scn.LL.diagnostics.getState();
+    assert.ok(isSuccessish(stateA.apiStatus), `apiStatus was ${stateA.apiStatus}`);
+    assert.equal(stateA.displayedCardCount, 1);
+    const aKey = stateA.displayedAnalyzeKey;
+
+    // Switch to song B → API call #2, B's cards cached.
+    installFakeConsoleCapture(scn, englishLyricsPayloadAlt);
+    await wait(30);
+    assert.equal(scn.fetchCalls.length, 2, "B capture must fire one more fetch");
+    const stateB = scn.LL.diagnostics.getState();
+    assert.ok(isSuccessish(stateB.apiStatus));
+    assert.notEqual(stateB.displayedAnalyzeKey, aKey);
+
+    // Return to song A — cards should come from cache, no new fetch.
+    installFakeConsoleCapture(scn, englishLyricsPayload);
+    await wait(30);
+    assert.equal(scn.fetchCalls.length, 2, "returning to cached A must NOT fire a fresh fetch");
+    const stateAgain = scn.LL.diagnostics.getState();
+    assert.ok(isSuccessish(stateAgain.apiStatus), "must reach a success status served from cache");
+    assert.equal(stateAgain.cacheUseStatus, "served-from-cache");
+    assert.equal(stateAgain.cacheHit, true);
+    assert.equal(stateAgain.displayedAnalyzeKey, aKey, "displayed key must match the original A key");
+    assert.equal(stateAgain.displayedCardCount, 1);
+    assert.match(stateAgain.panelTextSample, /Stay with me/);
+  } finally {
+    scn.restore();
+  }
 });

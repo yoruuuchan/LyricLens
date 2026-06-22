@@ -380,6 +380,128 @@ Rules:
     return error?.name === "AbortError" || String(error?.message || "").includes("abort");
   }
 
+  // Incremental parser that scans a buffer of streaming JSON and emits each
+  // card object as soon as its closing brace appears inside the cards array.
+  // Tolerates partial input — callers append() new chunks as they arrive.
+  function createCardsStreamParser({ onCard } = {}) {
+    let buffer = "";
+    let cardsArrayStart = -1;
+    let cursor = 0;
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    let cardStart = -1;
+    let emittedCount = 0;
+    let closed = false;
+
+    function append(chunk) {
+      if (closed || !chunk) return;
+      buffer += chunk;
+      scan();
+    }
+
+    function scan() {
+      if (cardsArrayStart < 0) {
+        const match = /"cards"\s*:\s*\[/.exec(buffer);
+        if (!match) return;
+        cardsArrayStart = match.index + match[0].length;
+        cursor = cardsArrayStart;
+      }
+
+      while (cursor < buffer.length) {
+        const ch = buffer[cursor];
+
+        if (escape) { escape = false; cursor += 1; continue; }
+        if (inString) {
+          if (ch === "\\") escape = true;
+          else if (ch === '"') inString = false;
+          cursor += 1;
+          continue;
+        }
+        if (ch === '"') { inString = true; cursor += 1; continue; }
+
+        if (ch === "{") {
+          if (depth === 0) cardStart = cursor;
+          depth += 1;
+        } else if (ch === "}") {
+          depth -= 1;
+          if (depth === 0 && cardStart >= 0) {
+            const slice = buffer.slice(cardStart, cursor + 1);
+            let card = null;
+            try { card = JSON.parse(slice); } catch (_) {}
+            if (card && typeof card === "object" && !Array.isArray(card)) {
+              try { onCard?.(card, emittedCount); } catch (_) {}
+              emittedCount += 1;
+            }
+            cardStart = -1;
+          }
+        } else if (ch === "]" && depth === 0) {
+          closed = true;
+          cursor += 1;
+          return;
+        }
+
+        cursor += 1;
+      }
+    }
+
+    return {
+      append,
+      getEmittedCount() { return emittedCount; },
+      isClosed() { return closed; }
+    };
+  }
+
+  // Consume an OpenAI-style SSE response. Calls onDelta with each
+  // content delta, onUsage/onFinishReason when those fields appear.
+  // Returns the concatenated content string.
+  async function consumeSseStream(response, handlers = {}) {
+    const reader = response.body?.getReader?.();
+    if (!reader) throw new Error("Response body is not readable");
+    const decoder = typeof TextDecoder !== "undefined" ? new TextDecoder() : null;
+    if (!decoder) throw new Error("TextDecoder unavailable in this runtime");
+    let buffer = "";
+    let fullContent = "";
+
+    function processLine(line) {
+      const trimmed = line.replace(/\r$/, "").trim();
+      if (!trimmed || !trimmed.startsWith("data:")) return false;
+      const data = trimmed.slice(5).trim();
+      if (data === "[DONE]") return true;
+      let obj;
+      try { obj = JSON.parse(data); } catch (_) { return false; }
+      const choice = obj?.choices?.[0];
+      const delta = choice?.delta?.content;
+      if (typeof delta === "string" && delta) {
+        fullContent += delta;
+        handlers.onDelta?.(delta);
+      }
+      const fr = choice?.finish_reason;
+      if (fr) handlers.onFinishReason?.(fr);
+      if (obj?.usage) handlers.onUsage?.(obj.usage);
+      return false;
+    }
+
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, nl);
+          buffer = buffer.slice(nl + 1);
+          if (processLine(line)) return fullContent;
+        }
+      }
+      buffer += decoder.decode();
+      if (buffer.trim()) processLine(buffer);
+    } finally {
+      try { reader.releaseLock?.(); } catch (_) {}
+    }
+    return fullContent;
+  }
+
   async function requestAnalysis({
     apiEndpoint,
     apiKey,
@@ -394,7 +516,8 @@ Rules:
     cardGenerationMode,
     signal,
     fetchImpl,
-    timeoutMs = ANALYSIS_REQUEST_TIMEOUT_FALLBACK_MS
+    timeoutMs = ANALYSIS_REQUEST_TIMEOUT_FALLBACK_MS,
+    onStreamCard
   }) {
     const fetcher = fetchImpl || root.fetch;
     if (typeof fetcher !== "function") {
@@ -411,13 +534,19 @@ Rules:
     let currentRfMode = responseFormatMode || "auto";
     let responseFormatUnsupported = false;
     let responseFormatFallbackAttempted = false;
+    const wantStreaming = typeof onStreamCard === "function";
 
     async function sendRequest(rfModeOverride) {
       const rfMode = rfModeOverride !== undefined ? rfModeOverride : currentRfMode;
-      return buildChatRequestBody({
+      const built = buildChatRequestBody({
         modelName, language, formattedLyrics, maxTokens, temperature,
         thinkingMode, responseFormatMode: rfMode, isFallback, cardGenerationMode
       });
+      if (wantStreaming) {
+        built.stream = true;
+        built.stream_options = { include_usage: true };
+      }
+      return built;
     }
 
     let body = await sendRequest();
@@ -467,14 +596,12 @@ Rules:
 
         safeUpdateDiagnostics({ lastResponseStatus: response.status });
 
-        let responseText = "";
-        try {
-          responseText = await response.text();
-        } catch (_) {}
-        const responseTextSample = sampleString(responseText, 500);
-        safeUpdateDiagnostics({ lastResponseTextSample: responseTextSample });
-
         if (!response.ok) {
+          let responseText = "";
+          try { responseText = await response.text(); } catch (_) {}
+          const responseTextSample = sampleString(responseText, 500);
+          safeUpdateDiagnostics({ lastResponseTextSample: responseTextSample });
+
           const status = response.status;
           if (status === 400 && currentRfMode === "auto" && !responseFormatFallbackAttempted) {
             const errorText = responseText.toLowerCase();
@@ -494,6 +621,92 @@ Rules:
           err.responseTextSample = responseTextSample;
           throw err;
         }
+
+        const contentTypeHeader = String(response.headers?.get?.("content-type") || "").toLowerCase();
+        const responseIsSse = contentTypeHeader.includes("event-stream");
+
+        if (wantStreaming && responseIsSse) {
+          const parser = createCardsStreamParser({
+            onCard: (card, idx) => { try { onStreamCard(card, idx); } catch (_) {} }
+          });
+          let streamFinishReason = null;
+          let streamUsage = null;
+          const content = await consumeSseStream(response, {
+            onDelta: (delta) => parser.append(delta),
+            onUsage: (u) => { streamUsage = u; },
+            onFinishReason: (fr) => { streamFinishReason = fr; }
+          });
+          if (streamUsage) {
+            const reasoningTokens = streamUsage?.completion_tokens_details?.reasoning_tokens ?? null;
+            const completionTokens = streamUsage.completion_tokens;
+            safeUpdateDiagnostics({
+              responsePromptTokens: Number.isFinite(streamUsage.prompt_tokens) ? streamUsage.prompt_tokens : null,
+              responseCompletionTokens: Number.isFinite(completionTokens) ? completionTokens : null,
+              responseReasoningTokens: Number.isFinite(reasoningTokens) ? reasoningTokens : null,
+              responseTotalTokens: Number.isFinite(streamUsage.total_tokens) ? streamUsage.total_tokens : null
+            });
+          }
+          if (streamFinishReason) safeUpdateDiagnostics({ finishReason: streamFinishReason });
+
+          const contentSample = sampleString(content, 500);
+          safeUpdateDiagnostics({
+            lastParsedContentSample: contentSample,
+            streamedCardCount: parser.getEmittedCount()
+          });
+
+          if (!content) {
+            throw new ApiParseError("API 流式返回内容为空", {
+              stage: "missing-content-stream",
+              responseTextSample: contentSample,
+              contentSample,
+              requestUrl
+            });
+          }
+
+          const parseReport = parseCompletionJsonWithReport(content);
+          safeUpdateDiagnostics({
+            extractedJsonStrategy: parseReport.strategy || "stream",
+            rawContentSample: rawContentSample(content),
+            rawContentLength: content.length,
+            finishReasonWasLength: streamFinishReason === "length"
+          });
+
+          if (parseReport.parsed) {
+            if (streamFinishReason === "length") {
+              const parseErr = new ApiParseError("模型输出太长被截断，无法解析完整 JSON", {
+                stage: "truncated-content",
+                contentSample: rawContentSample(content),
+                responseTextSample: contentSample,
+                requestUrl
+              });
+              parseErr.finishReasonWasLength = true;
+              parseErr.rawContentLength = content.length;
+              parseErr.extractedJsonStrategy = parseReport.strategy || "stream";
+              throw parseErr;
+            }
+            return parseReport.parsed;
+          }
+
+          const parseErr = new ApiParseError("API 流式返回内容无法解析为 JSON", {
+            stage: "content-json-stream",
+            contentSample: rawContentSample(content),
+            responseTextSample: contentSample,
+            requestUrl
+          });
+          parseErr.finishReasonWasLength = streamFinishReason === "length";
+          parseErr.rawContentLength = content.length;
+          parseErr.extractedJsonStrategy = parseReport.strategy || "stream";
+          if (streamFinishReason === "length") parseErr.message = "模型输出被截断，JSON 无法解析";
+          throw parseErr;
+        }
+
+        // Non-streaming path (or server didn't honor stream:true)
+        let responseText = "";
+        try {
+          responseText = await response.text();
+        } catch (_) {}
+        const responseTextSample = sampleString(responseText, 500);
+        safeUpdateDiagnostics({ lastResponseTextSample: responseTextSample });
 
         let responseJson;
         try {
@@ -857,7 +1070,9 @@ Rules:
     describeHttpStatus,
     requestAnalysis,
     testConnection,
-    testAnalyzeSpeed
+    testAnalyzeSpeed,
+    createCardsStreamParser,
+    consumeSseStream
   };
 
   root.LyricLens = root.LyricLens || {};

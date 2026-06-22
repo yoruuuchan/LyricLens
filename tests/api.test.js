@@ -548,3 +548,87 @@ test("rawContentSample truncates long content at both ends", () => {
   assert.ok(sample.includes("chars"), "sample must indicate truncation");
   assert.match(sample, /^x{500}/);
 });
+
+test("createCardsStreamParser emits each card object as its closing brace lands", () => {
+  const { createCardsStreamParser } = require("../src/api");
+  const collected = [];
+  const parser = createCardsStreamParser({ onCard: (card, idx) => collected.push({ card, idx }) });
+  const full = '{"cards":[{"lineIndex":0,"original":"Hello","translation":"你好"},{"lineIndex":1,"original":"World"}]}';
+  for (const ch of full) parser.append(ch);
+  assert.equal(collected.length, 2);
+  assert.equal(collected[0].card.lineIndex, 0);
+  assert.equal(collected[0].card.original, "Hello");
+  assert.equal(collected[1].card.lineIndex, 1);
+  assert.equal(parser.isClosed(), true);
+});
+
+test("createCardsStreamParser ignores braces inside string values and handles escapes", () => {
+  const { createCardsStreamParser } = require("../src/api");
+  const cards = [];
+  const parser = createCardsStreamParser({ onCard: (c) => cards.push(c) });
+  // Card 1 has } inside a translation; card 2 has \" inside a note; card 3 has nested object.
+  const payload = '{"cards":[{"lineIndex":0,"translation":"close } here"},{"lineIndex":1,"note":"says \\"hi\\""},{"lineIndex":2,"highlights":[{"phrase":"a"}]}]}';
+  parser.append(payload);
+  assert.equal(cards.length, 3);
+  assert.equal(cards[0].translation, "close } here");
+  assert.equal(cards[1].note, 'says "hi"');
+  assert.deepEqual(cards[2].highlights, [{ phrase: "a" }]);
+});
+
+test("createCardsStreamParser stays partial until brace closes", () => {
+  const { createCardsStreamParser } = require("../src/api");
+  const cards = [];
+  const parser = createCardsStreamParser({ onCard: (c) => cards.push(c) });
+  parser.append('{"cards":[{"lineIndex":0,"orig');
+  assert.equal(cards.length, 0, "should not emit on partial");
+  parser.append('inal":"Hello"');
+  assert.equal(cards.length, 0, "still partial without closing brace");
+  parser.append('},{"lineIndex":1,"original":"World"}]}');
+  assert.equal(cards.length, 2);
+});
+
+test("requestAnalysis streams cards via onStreamCard when SSE response arrives", async () => {
+  const { requestAnalysis } = require("../src/api");
+  const seen = [];
+  const sseBody = [
+    'data: {"choices":[{"delta":{"content":"{\\"cards\\":["}}]}',
+    'data: {"choices":[{"delta":{"content":"{\\"lineIndex\\":0,\\"original\\":\\"A\\"},"}}]}',
+    'data: {"choices":[{"delta":{"content":"{\\"lineIndex\\":1,\\"original\\":\\"B\\"}]}"}}]}',
+    'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}}',
+    'data: [DONE]'
+  ].join("\n\n") + "\n\n";
+
+  function makeStreamResponse(text) {
+    const encoder = new TextEncoder();
+    const reader = {
+      buffers: [encoder.encode(text)],
+      async read() {
+        if (this.buffers.length === 0) return { value: undefined, done: true };
+        return { value: this.buffers.shift(), done: false };
+      },
+      releaseLock() {}
+    };
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: (name) => name.toLowerCase() === "content-type" ? "text/event-stream" : null },
+      body: { getReader: () => reader },
+      async text() { return text; }
+    };
+  }
+
+  const fakeFetch = async () => makeStreamResponse(sseBody);
+  const parsed = await requestAnalysis({
+    apiEndpoint: "https://example.com/v1/chat/completions",
+    apiKey: "k",
+    modelName: "m",
+    language: "en",
+    formattedLyrics: "[0] A\n[1] B",
+    fetchImpl: fakeFetch,
+    onStreamCard: (card) => seen.push(card)
+  });
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0].lineIndex, 0);
+  assert.equal(seen[1].original, "B");
+  assert.deepEqual(parsed.cards.length, 2);
+});
