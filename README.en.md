@@ -7,15 +7,16 @@ LyricLens is a BetterNCM plugin (v0.1 MVP) that turns NetEase Cloud Music into a
 ## Screenshots
 
 <p align="center">
-  <img src="screenshots/light.png" alt="LyricLens light theme: learning card follows the lyrics" width="48%" />
-  <img src="screenshots/dark.png"  alt="LyricLens dark theme: learning card follows the lyrics"  width="48%" />
+  <img src="screenshots/lyric-ncm.png" alt="Learning card following the lyrics inside the NetEase Cloud Music client (Aimer — After Rain)" width="85%" />
 </p>
 
 <p align="center">
-  <img src="screenshots/dark-advanced.png" alt="Settings panel: analysis request and model-compatibility options" width="78%" />
+  <img src="screenshots/lyric-amll.png" alt="Learning card alongside AMLL's immersive lyric view (dark theme)" width="85%" />
 </p>
 
-More screenshots in [`screenshots/`](screenshots/).
+<p align="center">
+  <img src="screenshots/settings.png" alt="Settings panel: AI Service (OpenAI-compatible endpoint, API key, model)" width="55%" />
+</p>
 
 ## Install
 

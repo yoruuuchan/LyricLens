@@ -7,15 +7,16 @@ BetterNCM AI 歌词学习插件 v0.1 MVP。播放英文/日文歌曲时，读取
 ## 截图
 
 <p align="center">
-  <img src="screenshots/light.png" alt="LyricLens 浅色主题：跟随歌词显示学习卡片" width="48%" />
-  <img src="screenshots/dark.png"  alt="LyricLens 深色主题：跟随歌词显示学习卡片" width="48%" />
+  <img src="screenshots/lyric-ncm.png" alt="网易云客户端中跟随歌词显示学习卡片（Aimer - After Rain）" width="85%" />
 </p>
 
 <p align="center">
-  <img src="screenshots/dark-advanced.png" alt="设置面板：分析请求 / 模型兼容 高级选项" width="78%" />
+  <img src="screenshots/lyric-amll.png" alt="AMLL 沉浸式歌词模式下的学习卡片（深色主题）" width="85%" />
 </p>
 
-更多截图见 [`screenshots/`](screenshots/)。
+<p align="center">
+  <img src="screenshots/settings.png" alt="设置面板：AI 服务（OpenAI 兼容 endpoint / API Key / 模型）" width="55%" />
+</p>
 
 ## 安装
 
