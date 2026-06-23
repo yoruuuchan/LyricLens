@@ -475,3 +475,93 @@ test("normalizeSongId: short numbers (< 4 digits) return null", () => {
 test("normalizeSongId: track-2736357168_NXA8NF", () => {
   assert.equal(Sync.normalizeSongId("track-2736357168_NXA8NF"), "2736357168");
 });
+
+// ── parseAmllProgressJump (song-change signal from AMLL warning) ──
+
+test("parseAmllProgressJump: extracts songId + trackId from real warning", () => {
+  const r = Sync.parseAmllProgressJump("[AMLL] [WARN] 音乐播放进度跳变 431259256_DS7BUI 0 1 244.283");
+  assert.equal(r.songId, "431259256");
+  assert.equal(r.trackId, "431259256_DS7BUI");
+});
+
+test("parseAmllProgressJump: trackId embedded digits do not pollute currentMs", () => {
+  // "DS7BUI" contains a 7 — it must NOT leak into the trailing-time scan.
+  const r = Sync.parseAmllProgressJump("[AMLL] [WARN] 音乐播放进度跳变 431259256_DS7BUI 0 1 244.283");
+  assert.equal(r.currentMs, 244283);
+});
+
+test("parseAmllProgressJump: song-load warning (prev=0)", () => {
+  const r = Sync.parseAmllProgressJump("[AMLL] [WARN] 音乐播放进度跳变 32358691_MMILK1 0 0 7.403");
+  assert.equal(r.songId, "32358691");
+  assert.equal(r.currentMs, 7403);
+});
+
+test("parseAmllProgressJump: another real trackId sample", () => {
+  const r = Sync.parseAmllProgressJump("[AMLL] [WARN] 音乐播放进度跳变 536623501_ESAHH5 244.253 1 244.213");
+  assert.equal(r.songId, "536623501");
+  assert.equal(r.currentMs, 244213);
+});
+
+test("parseAmllProgressJump: a seek emits the same songId as load (caller dedupes)", () => {
+  const load = Sync.parseAmllProgressJump("[AMLL] [WARN] 音乐播放进度跳变 431259256_DS7BUI 0 1 244.283");
+  const seek = Sync.parseAmllProgressJump("[AMLL] [WARN] 音乐播放进度跳变 431259256_DS7BUI 7.403 1 7.373");
+  assert.equal(load.songId, seek.songId);
+});
+
+test("parseAmllProgressJump: non-AMLL text returns null", () => {
+  assert.equal(Sync.parseAmllProgressJump("some unrelated console.warn output"), null);
+  // marker present but no [AMLL] tag → not ours
+  assert.equal(Sync.parseAmllProgressJump("音乐播放进度跳变 1806096519_ABC 0 1 5"), null);
+});
+
+test("parseAmllProgressJump: AMLL warning without the jump marker returns null", () => {
+  assert.equal(Sync.parseAmllProgressJump("[AMLL] [WARN] something else entirely"), null);
+});
+
+test("parseAmllProgressJump: null/empty input returns null", () => {
+  assert.equal(Sync.parseAmllProgressJump(null), null);
+  assert.equal(Sync.parseAmllProgressJump(""), null);
+});
+
+// ── classifyDurationChange (slider-duration song-change signal) ──
+
+test("classifyDurationChange: first valid value seeds, no fire", () => {
+  assert.deepEqual(Sync.classifyDurationChange(null, 248), { action: "seed" });
+});
+
+test("classifyDurationChange: ≥1s jump fires", () => {
+  assert.deepEqual(Sync.classifyDurationChange(248, 191), { action: "fire" });
+  assert.deepEqual(Sync.classifyDurationChange(191, 248), { action: "fire" });
+});
+
+test("classifyDurationChange: sub-second drift on the same track is ignored", () => {
+  // Slider reports may have float precision noise — 248.0 vs 247.998 must
+  // not trigger a spurious song change.
+  assert.deepEqual(Sync.classifyDurationChange(248, 247.998), { action: "ignore" });
+  assert.deepEqual(Sync.classifyDurationChange(248, 248.5), { action: "ignore" });
+});
+
+test("classifyDurationChange: volume-slider range (max <= 5) is ignored", () => {
+  // A volume slider's max is 1; even if our selector misfires on it, the
+  // value must never be mistaken for a track duration.
+  assert.deepEqual(Sync.classifyDurationChange(null, 1), { action: "ignore" });
+  assert.deepEqual(Sync.classifyDurationChange(248, 1), { action: "ignore" });
+  assert.deepEqual(Sync.classifyDurationChange(null, 5), { action: "ignore" });
+});
+
+test("classifyDurationChange: non-finite values are ignored", () => {
+  assert.deepEqual(Sync.classifyDurationChange(null, NaN), { action: "ignore" });
+  assert.deepEqual(Sync.classifyDurationChange(248, NaN), { action: "ignore" });
+  assert.deepEqual(Sync.classifyDurationChange(null, Infinity), { action: "ignore" });
+});
+
+test("classifyDurationChange: same-length consecutive songs (rare) do not fire", () => {
+  // Documented gap: two tracks of identical duration won't trigger this
+  // signal. Acceptable — the lyrics-content-diff fallback still covers it
+  // for any track where NCM re-logs the lyrics.
+  assert.deepEqual(Sync.classifyDurationChange(240, 240), { action: "ignore" });
+});
+
+test("startProgressDurationMonitor is exported as a function", () => {
+  assert.equal(typeof Sync.startProgressDurationMonitor, "function");
+});

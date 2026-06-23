@@ -47,6 +47,13 @@
   // AMLL-stuck. Better to freeze cards than to keep extrapolating into
   // a wildly wrong position.
   const TRUSTED_TIME_PAUSE_INFER_MS = 5000;
+  // Within this many ms after a song change, refuse to anchor on an
+  // unreliable time source (the AMLL CSS var, which freezes on the
+  // previous song's tail when the slider DOM is mid-remount). Anchoring
+  // there would yank cards to whatever ordinal corresponds to ~230s of
+  // the new track — the "切歌开头卡片摇摆" symptom. We extrapolate from
+  // songChangeAt instead, which always starts at 0 for a new song.
+  const TRUSTED_TIME_DISTRUST_AFTER_SONG_CHANGE_MS = 5000;
   let autoFollowSuppressTimer = null;
   let domObserver = null;
   let analysisPlaybackState = null;
@@ -188,19 +195,68 @@
     }
     Sync.startProgressListener(handleProgress, diagnostics);
     Sync.startSongMonitor(handleSongChange, handlePlayState, diagnostics);
-    // AMLL's "音乐播放进度跳变" warnings carry a time argument, but in
-    // practice it isn't reliable as a playback anchor — it can be the
-    // jump target rather than the current position (e.g. "0 1 208.233"
-    // fires the instant a song loads). Wire the probe for diagnostics
-    // only; the wall-clock fallback in readPlaybackTimeSnapshot uses
-    // songChangeAt as the t=0 reference instead, which over-estimates
-    // less when the warning value is wrong.
-    Sync.installAmllWarningProbe?.((timeMs, args) => {
+    // AMLL's "音乐播放进度跳变" warning carries an unreliable time (it's the
+    // jump TARGET, not the current position), but the trackId it embeds is
+    // gold: the songId flips on every real song change while seeks keep it
+    // stable. On this BetterNCM build that's our only dependable song-change
+    // signal — PlayState is dead, getPlaying() throws (so startSongMonitor
+    // never fires), and the console-content-diff fallback silently misses
+    // re-played songs because NCM doesn't re-log their lyrics. Drive
+    // handleSongChange from the parsed songId; guard on currentSongId so
+    // seeks (same trackId) don't spuriously re-trigger a reset.
+    Sync.installAmllWarningProbe?.((timeMs, args, parsed) => {
       diagnostics?.updateState?.({
         lastAmllWarningTimeMs: timeMs,
-        lastAmllWarningAt: Date.now()
+        lastAmllWarningAt: Date.now(),
+        lastAmllWarningSongId: parsed?.songId || null
       });
+      const sid = parsed?.songId;
+      if (sid && sid !== currentSongId) {
+        console.log("[LyricLens:song-change-from-amll-warning]", { from: currentSongId, to: sid });
+        handleSongChange(sid);
+      }
     });
+    // Last-resort song-change signal: NCM's progress slider carries the
+    // track duration on `max`. When it shifts, the song changed — even
+    // when AMLL's console.warn hook got clobbered (which it does on this
+    // build) and lyrics-content-diff misses re-played songs. We don't get
+    // a songId from the slider, so feed softResetForNewLyrics; the next
+    // lyrics capture (DOM observer restarted below) drives analyze.
+    Sync.startProgressDurationMonitor?.(({ prevSec, nextSec }) => {
+      console.log("[LyricLens:song-change-from-slider-duration]", {
+        prevSec, nextSec, currentSongId
+      });
+      softResetForNewLyrics({ reason: "slider-duration-changed" });
+      // CRITICAL: softResetForNewLyrics deliberately keeps the capture
+      // buffer (its original caller — handleCapturePayload — has the new
+      // payload in hand). Our caller does NOT: the DOM observer has just
+      // been reset and the new song's lyrics haven't arrived yet. If we
+      // leave the buffer holding the previous song's lyrics, a user
+      // pressing the loading-state retry button will pull THOSE stale
+      // lyrics out of getLastCapturedLyrics() and analyze them as the new
+      // song — the "shows song A's lyrics but syncs to song B's time"
+      // catastrophe. Clear it so retry waits for fresh capture.
+      Lyrics.clearCapturedLyrics?.();
+      try {
+        if (domObserver?.cleanup) { domObserver.cleanup(); domObserver = null; }
+        domObserver = Capture.createDomLyricsObserver?.(root, (payload) => {
+          if (payload && payload.lines && payload.lines.length) {
+            handleCapturePayload(payload);
+          }
+        });
+        if (domObserver?.start) domObserver.start();
+      } catch (_) {}
+      // Drive analyzeSong proactively, mirroring handleSongChange — it'd
+      // otherwise wait passively for the DOM observer to push a payload,
+      // and we just nuked the capture buffer so a retry click would also
+      // find nothing. analyzeSong's internal waitForCapture (12s) is the
+      // right primitive to let the new song's lyrics arrive on their own
+      // schedule, including on re-played tracks where the console-print
+      // path is silent.
+      try {
+        analyzeSong(currentSongId, { forceRefresh: false, trigger: "slider-duration" });
+      } catch (_) {}
+    }, diagnostics);
   }
 
   const handleRuntimeLyricsCapturedDebounced = Utils.debounce((detail) => {
@@ -545,7 +601,12 @@
       });
     }
     if (value === false && autoFollowSuppressTimer) {
-      // User manually turned off while timer is running — respect it, don't restart timer
+      // User manually turned off while the manual-navigation suppress timer
+      // is running. Cancel the timer too — otherwise it fires N seconds later
+      // and silently flips autoFollow back to true behind the user's back
+      // ("跟随" toggle randomly reverts). Matches the harness behavior in
+      // tests/manual-auto-follow.test.js manualToggleFollow.
+      clearAutoFollowSuppressTimer();
       diagnostics?.updateState?.({
         autoFollowSuppressedUntil: null,
         autoFollowRestoreReason: "manual-off"
@@ -811,6 +872,13 @@
     clearAutoFollowSuppressTimer();
     lastPromotedConsoleSongId = null;
     abortActiveRequest({ reason: reason || "soft-reset" });
+    // Belt-and-suspenders: even though abortActiveRequest clears
+    // inFlightAnalyzeKey, observed dumps show G1 ("same-inflight-canonical-key")
+    // can still trip after a slider-duration soft-reset — a real race in some
+    // path between the in-flight Promise chain and the canonical-key alias
+    // rebind (main.js:1739) seems to leak the in-flight key. Clearing here
+    // unconditionally guarantees the next analyzeSong won't be ghost-blocked.
+    inFlightAnalyzeKey = null;
     if (panel?.setAutoFollow) panel.setAutoFollow(true);
     panel?.resetForAnalyze?.({
       analyzeKey: null,
@@ -891,6 +959,9 @@
       // Cleanup and restart DOM observer for new song
       if (domObserver?.cleanup) { domObserver.cleanup(); domObserver = null; }
       abortActiveRequest({ reason: "song-change" });
+      // Same belt-and-suspenders as softResetForNewLyrics: guarantee no
+      // ghost in-flight key survives into the new song's first analyze.
+      inFlightAnalyzeKey = null;
       // Restart DOM observer without seeding from current DOM. Reasoning:
       // when NCM updates the lyrics DOM faster than the amll-state mutable
       // global (which happens on a re-play of a recently played song),
@@ -2268,7 +2339,8 @@
       return {
         timeMs: Number(result.timeMs),
         status: "trusted-time-source",
-        source: result.source || "trusted-progress-getter"
+        source: result.source || "trusted-progress-getter",
+        reliable: result.reliable === true
       };
     }
     return null;
@@ -2348,7 +2420,7 @@
       ...cardDiagnostics(currentAnalysis.cards, currentCardOrdinal),
       panelLastRenderReason: reason,
       panelLastRenderedAt: Date.now(),
-      panelTextSample: [card.line || card.original, card.translation].filter(Boolean).join(" / ").slice(0, 200)
+      panelTextSample: [card.original || card.line, card.translation].filter(Boolean).join(" / ").slice(0, 200)
     });
     if (panel?.renderCardAt) {
       panel.renderCardAt(currentCardOrdinal, reason);
@@ -2372,6 +2444,25 @@
     }
     const now = Date.now();
     const trustedSnapshot = readTrustedPlaybackSnapshot();
+    // ── Fresh-song-change distrust window ──
+    // Right after a song change, the NCM progress slider DOM may be
+    // mid-remount and Sync falls back to the AMLL CSS var, which is
+    // frozen on the previous song's tail. Anchoring there picks the
+    // wrong card; the next tick gets the real slider value and snaps
+    // back to card 0 — the user sees cards bounce between the last and
+    // first card. Refuse unreliable sources for the first few seconds
+    // and extrapolate from songChangeAt (always starts at 0 for a new
+    // song). When the slider DOM settles, its reliable=true value wins
+    // and the trusted branch below takes over normally.
+    if (trustedSnapshot
+        && trustedSnapshot.reliable === false
+        && songChangeAt > 0
+        && (now - songChangeAt) < TRUSTED_TIME_DISTRUST_AFTER_SONG_CHANGE_MS) {
+      return {
+        timeMs: Math.max(0, now - songChangeAt),
+        status: "wall-clock-from-song-change-fresh"
+      };
+    }
     if (trustedSnapshot && Number.isFinite(Number(trustedSnapshot.timeMs))) {
       const t = Number(trustedSnapshot.timeMs);
       // Heuristic pause detection: AMLL writes --amll-player-time=0 when
@@ -2410,6 +2501,16 @@
         trustedAnchorWallClock: playbackBaseWallClock
       });
       if (frozenForMs < TRUSTED_TIME_STALE_MS) return trustedSnapshot;
+      // Ground-truth source (NCM progress slider) frozen past the stale
+      // window = playback is paused or mid-seek, NOT a laggy feed. The
+      // slider advances every ~1s while playing, so a longer stall can
+      // only mean a stopped playhead. Hold the card at the frozen position
+      // instead of extrapolating forward (which is what makes cards keep
+      // scrolling through a pause). A resume or seek changes the value and
+      // re-anchors on the very next tick via the branch above.
+      if (trustedSnapshot.reliable) {
+        return { timeMs: playbackBaseMs, status: "paused-inferred" };
+      }
       // The pause-infer path only makes sense when we actually anchored
       // on this song. Without an anchor (playbackBaseWallClock === 0)
       // the song is still in the "AMLL has the previous song's frozen

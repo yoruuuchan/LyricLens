@@ -625,7 +625,19 @@
       } else if (mode === "card") {
         renderCurrentCard(content);
       } else if (mode === "loading") {
-        content.appendChild(Card.renderMessage(message, "ll-empty ll-status"));
+        // Loading is also click-to-retry. Normal analyze settles in 1-10s; the
+        // click is a manual unstuck for the rare case where a capture arrives
+        // but doesn't reach analyzeSong (a known slider-duration-path boundary
+        // — Yoru can recover gracefully instead of "切下一首再切回来" on stage).
+        const loadingNode = Card.renderMessage(message, "ll-empty ll-status");
+        loadingNode.title = "如果一直没出来，点这里重试";
+        loadingNode.tabIndex = 0;
+        loadingNode.style.cursor = "pointer";
+        loadingNode.addEventListener("click", () => options.onRetry?.(currentSongId));
+        loadingNode.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") options.onRetry?.(currentSongId);
+        });
+        content.appendChild(loadingNode);
       } else if (mode === "error") {
         const errorNode = Card.renderMessage(message, "ll-empty ll-error");
         errorNode.tabIndex = 0;

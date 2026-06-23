@@ -30,3 +30,4 @@ Thumbs.db
 
 # Session handoff notes — reference infra details that shouldn't be public
 HANDOFF.md
+.llcheck/

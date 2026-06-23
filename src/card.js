@@ -60,7 +60,11 @@
     meta.appendChild(el("span", "", `LINE ${String(lineIndex).padStart(2, "0")}${time ? `  ${time}` : ""}`));
     fragment.appendChild(meta);
 
-    fragment.appendChild(el("h2", "ll-line", card.line || card.original || ""));
+    // Prefer card.original — it's pinned to the real lyricLine.text via the
+    // resolved index (api.js:347), so it stays correct even when the LLM
+    // labels a card with the wrong lineIndex. card.line carries the LLM's
+    // raw "original" field, which can drift to an off-by-N lyric.
+    fragment.appendChild(el("h2", "ll-line", card.original || card.line || ""));
     fragment.appendChild(el("div", "ll-translation", card.translation || ""));
     fragment.appendChild(el("div", "ll-section-label", "学习点"));
 

@@ -632,3 +632,77 @@ test("requestAnalysis streams cards via onStreamCard when SSE response arrives",
   assert.equal(seen[1].original, "B");
   assert.deepEqual(parsed.cards.length, 2);
 });
+
+// ── Text-based index rescue (LLM mislabels lineIndex but reports the right text) ──
+
+test("normalizeCardsWithReport rescues a card when LLM mislabels lineIndex but original matches another line", () => {
+  // Real lyrics: line 30 = "好きなことを続けること", line 33 = "そう何年だってきっと"
+  // LLM analyzed "そう何年だってきっと" but tagged it as lineIndex=30.
+  // Expected: code moves the card to lineIndex=33 so original+translation+startMs
+  // all line up at the position the LLM actually analyzed.
+  const lyricLines = [
+    { index: 30, text: "好きなことを続けること", startTime: 90000, endTime: 94000 },
+    { index: 31, text: "それが僕の宝物", startTime: 94000, endTime: 98000 },
+    { index: 33, text: "そう何年だってきっと", startTime: 119000, endTime: 123000 }
+  ];
+  const aiOutput = {
+    cards: [{
+      lineIndex: 30,
+      original: "そう何年だってきっと",
+      translation: "没错 无论过多少年都一定会",
+      points: []
+    }]
+  };
+  const report = normalizeCardsWithReport(aiOutput, lyricLines);
+  assert.equal(report.cards.length, 1);
+  const card = report.cards[0];
+  assert.equal(card.lineIndex, 33, "card.lineIndex should be rescued to 33");
+  assert.equal(card.original, "そう何年だってきっと", "original should match the real line at lineIndex 33");
+  assert.equal(card.startMs, 119000, "startMs should be the real line 33 startMs");
+  assert.equal(card.translation, "没错 无论过多少年都一定会", "translation stays the LLM's");
+  assert.equal(report.dropReasons.indexRescuedByText, 1);
+});
+
+test("normalizeCardsWithReport leaves a correctly-labeled card alone (no rescue needed)", () => {
+  const lyricLines = [
+    { index: 30, text: "好きなことを続けること", startTime: 90000, endTime: 94000 },
+    { index: 33, text: "そう何年だってきっと", startTime: 119000, endTime: 123000 }
+  ];
+  const aiOutput = {
+    cards: [{ lineIndex: 33, original: "そう何年だってきっと", translation: "没错…", points: [] }]
+  };
+  const report = normalizeCardsWithReport(aiOutput, lyricLines);
+  assert.equal(report.cards[0].lineIndex, 33);
+  assert.equal(report.dropReasons.indexRescuedByText, 0);
+});
+
+test("normalizeCardsWithReport does not rescue when LLM's text does not match any lyric line", () => {
+  // LLM hallucinated text that's nowhere in the lyrics. We keep the labeled
+  // index (no rescue) — caller can still use the real lyricLine.text via
+  // card.original on render fallback.
+  const lyricLines = [
+    { index: 30, text: "好きなことを続けること", startTime: 90000, endTime: 94000 },
+    { index: 33, text: "そう何年だってきっと", startTime: 119000, endTime: 123000 }
+  ];
+  const aiOutput = {
+    cards: [{ lineIndex: 30, original: "幻のフレーズ", translation: "…", points: [] }]
+  };
+  const report = normalizeCardsWithReport(aiOutput, lyricLines);
+  assert.equal(report.cards.length, 1);
+  assert.equal(report.cards[0].lineIndex, 30, "no rescue: kept LLM's labeled index");
+  assert.equal(report.dropReasons.indexRescuedByText, 0);
+});
+
+test("normalizeCardsWithReport: whitespace differences do not block text rescue", () => {
+  const lyricLines = [
+    { index: 0, text: "Stay  with me", startTime: 0, endTime: 4000 },
+    { index: 1, text: "Until the morning", startTime: 4000, endTime: 8000 }
+  ];
+  // LLM emits "Stay with me" (single space) but tags lineIndex=1.
+  const aiOutput = {
+    cards: [{ lineIndex: 1, original: "Stay with me", translation: "陪着我", points: [] }]
+  };
+  const report = normalizeCardsWithReport(aiOutput, lyricLines);
+  assert.equal(report.cards[0].lineIndex, 0, "whitespace-normalized rescue moves card to lineIndex 0");
+  assert.equal(report.dropReasons.indexRescuedByText, 1);
+});

@@ -153,6 +153,85 @@
     return null;
   }
 
+  // Cache for NCM's native progress-bar <input>. NCM binds the draggable
+  // progress slider's `value` (in seconds) to the real playback position,
+  // updating it ~1Hz. Unlike --amll-player-time this stays live for EVERY
+  // song — including ones AMLL can't find TTML for, where the CSS var
+  // freezes on the previous song's tail — and it reflects seeks instantly.
+  // Walking the whole DOM each sync tick would be wasteful, so we remember
+  // the node and only re-scan when it detaches or stops being plausible.
+  let ncmProgressSliderCache = null;
+
+  function isPlausibleProgressSlider(el) {
+    if (!el) return false;
+    // Reject 0..1 volume sliders: a progress slider's max is the track
+    // duration in seconds, always well above a few seconds for real songs.
+    const max = Number(el.getAttribute?.("max") ?? el.max);
+    if (Number.isFinite(max) && max > 0 && max <= 5) return false;
+    const value = Number(el.value);
+    return Number.isFinite(value) && value >= 0;
+  }
+
+  function findNcmProgressSlider(context) {
+    const doc = context?.document;
+    if (!doc) return null;
+    if (ncmProgressSliderCache) {
+      try {
+        if (doc.contains?.(ncmProgressSliderCache) && isPlausibleProgressSlider(ncmProgressSliderCache)) {
+          return ncmProgressSliderCache;
+        }
+      } catch (_) {}
+      ncmProgressSliderCache = null;
+    }
+    // Ordered by specificity: NCM's progress bar carries class `slider-default`
+    // and is the only such input in the tree (verified by DOM probe). The
+    // generic fallbacks only matter if a future build renames the class.
+    const selectors = [".slider-default input", 'input[type="range"]', '[role="slider"] input'];
+    for (const sel of selectors) {
+      let nodes = null;
+      try {
+        nodes = doc.querySelectorAll?.(sel);
+      } catch (_) {
+        continue;
+      }
+      if (!nodes) continue;
+      for (const el of nodes) {
+        if (isPlausibleProgressSlider(el)) {
+          ncmProgressSliderCache = el;
+          return el;
+        }
+      }
+    }
+    return null;
+  }
+
+  function readNcmProgressSliderTime(context = root) {
+    const candidate = {
+      name: "NCM.progress-slider",
+      status: "not-found",
+      trusted: true,
+      reliable: true,
+      source: ".slider-default input[value]"
+    };
+    let element = null;
+    try {
+      element = findNcmProgressSlider(context);
+    } catch (err) {
+      candidate.status = "failed";
+      candidate.reason = String(err?.message || err).slice(0, 120);
+      return { timeMs: null, candidate };
+    }
+    if (!element) return { timeMs: null, candidate };
+    const seconds = Number(element.value);
+    if (!Number.isFinite(seconds) || seconds < 0) {
+      candidate.status = "invalid-value";
+      candidate.reason = String(element.value ?? "").slice(0, 60) || "empty-slider-value";
+      return { timeMs: null, candidate };
+    }
+    candidate.status = "available";
+    return { timeMs: Math.round(seconds * 1000), candidate };
+  }
+
   const TRUSTED_PROGRESS_GETTERS = [
     "getPlayingProgress",
     "getProgress",
@@ -269,12 +348,28 @@
       ncmFailureReason = "trusted-progress-getter-unavailable";
     }
 
+    // Ground-truth playback position from NCM's own progress slider. Ranks
+    // above the AMLL CSS var because it stays live for every song and
+    // tracks seeks; the var only updates while AMLL animates TTML lyrics.
+    const sliderTime = readNcmProgressSliderTime(context);
+    candidates.push(sliderTime.candidate);
+    if (sliderTime.timeMs !== null) {
+      return {
+        timeMs: sliderTime.timeMs,
+        source: "NCM.progress-slider",
+        reliable: true,
+        candidates,
+        failureReason: null
+      };
+    }
+
     const amllCssTime = readAmllPlayerCssTime(context);
     candidates.push(amllCssTime.candidate);
     if (amllCssTime.timeMs !== null) {
       return {
         timeMs: amllCssTime.timeMs,
         source: "AMLL.player-css-time",
+        reliable: false,
         candidates,
         failureReason: null
       };
@@ -795,11 +890,102 @@
     }
   }
 
-  // Hook console.warn to intercept AMLL's "音乐播放进度跳变" messages.
-  // Format: "[AMLL] [WARN] 音乐播放进度跳变 <trackMarker> <prev> <const> <current>"
-  // The last number is the current playback time in seconds. This is the
-  // ONLY signal we have when AMLL fails to find TTML lyrics and stops
-  // updating --amll-player-time (its normal CSS-var channel goes dark).
+  // Parse AMLL's "音乐播放进度跳变" warning. Shape:
+  //   "[AMLL] [WARN] 音乐播放进度跳变 431259256_DS7BUI 0 1 244.283"
+  // The token after the marker is the trackId (<songId>_<suffix>); the
+  // trailing number is the jump TARGET in seconds — unreliable as a
+  // playback anchor (it's where playback jumped TO, fired on load/seek).
+  // The songId, however, IS reliable: it flips on every real song change
+  // while seeks keep the same trackId, making it our only dependable
+  // song-change signal on builds where PlayState is dead and getPlaying()
+  // throws. Returns null when the text isn't an AMLL progress-jump line.
+  function parseAmllProgressJump(text) {
+    const str = String(text ?? "");
+    if (!str.includes("[AMLL]")) return null;
+    const marker = str.indexOf("音乐播放进度跳变");
+    if (marker < 0) return null;
+    const tail = str.slice(marker);
+    const trackMatch = tail.match(/音乐播放进度跳变\s+(\S+)/);
+    const trackId = trackMatch ? trackMatch[1] : null;
+    const songId = trackId ? extractSongIdFromString(trackId) : null;
+    // Scan numbers AFTER the trackId so its embedded digits (e.g. the "7"
+    // in "DS7BUI") don't pollute the time extraction.
+    const afterTrack = trackMatch ? tail.slice(trackMatch.index + trackMatch[0].length) : tail;
+    const nums = afterTrack.match(/-?\d+\.?\d*/g);
+    let currentMs = null;
+    if (nums && nums.length) {
+      const sec = parseFloat(nums[nums.length - 1]);
+      if (Number.isFinite(sec) && sec >= 0 && sec < 100000) currentMs = Math.round(sec * 1000);
+    }
+    return { trackId, songId, currentMs };
+  }
+
+  // Pure decision: given the last-seen track duration (or null on first
+  // poll) and the freshly-read one, what should the monitor do?
+  //   "ignore" — bad value (NaN / volume-slider range) or sub-second drift.
+  //   "seed"   — first valid value; remember it, don't fire.
+  //   "fire"   — change ≥ 1 second; treat as a song change.
+  // Real song changes flip the duration by tens of seconds; the 1-second
+  // tolerance shields against sub-second precision noise on the same
+  // track (e.g. a slider that reports "248.0" then "247.998").
+  function classifyDurationChange(prevSec, nextSec) {
+    if (!Number.isFinite(nextSec) || nextSec <= 5) return { action: "ignore" };
+    if (prevSec === null) return { action: "seed" };
+    if (Math.abs(nextSec - prevSec) < 1) return { action: "ignore" };
+    return { action: "fire" };
+  }
+
+  // Poll NCM's progress-bar <input>.max — the track duration in seconds —
+  // and fire onDurationChange whenever it shifts by more than 1 second.
+  // This is our song-change signal of last resort: PlayState is dead, the
+  // AMLL console.warn hook gets clobbered by some later wrapper (NCM logs
+  // panel? another plugin?), and the lyrics-content-diff fallback misses
+  // re-played songs because NCM doesn't re-log their lyrics. The slider,
+  // however, is bound by NCM directly and always reflects the current
+  // track's duration. Caller gets {prevSec, nextSec}; no songId — feed it
+  // to softResetForNewLyrics rather than handleSongChange.
+  function startProgressDurationMonitor(onDurationChange, diagnostics) {
+    let lastDurationSec = null;
+    let stopped = false;
+    function check() {
+      if (stopped) return;
+      const slider = findNcmProgressSlider(root);
+      if (!slider) return;
+      const raw = slider.getAttribute?.("max") ?? slider.max;
+      const durationSec = Number(raw);
+      const decision = classifyDurationChange(lastDurationSec, durationSec);
+      if (decision.action === "ignore") return;
+      const prev = lastDurationSec;
+      lastDurationSec = durationSec;
+      if (decision.action === "seed") {
+        diagnostics?.updateState?.({
+          progressDurationMonitorReady: true,
+          lastDurationSec: durationSec
+        });
+        return;
+      }
+      diagnostics?.updateState?.({
+        lastDurationChangeAt: Date.now(),
+        lastDurationChangePrev: prev,
+        lastDurationChangeNext: durationSec,
+        lastDurationSec: durationSec
+      });
+      try {
+        onDurationChange({ prevSec: prev, nextSec: durationSec });
+      } catch (_) {}
+    }
+    const interval = setInterval(check, 1000);
+    check();
+    return function stopProgressDurationMonitor() {
+      stopped = true;
+      clearInterval(interval);
+    };
+  }
+
+  // Hook console.warn to intercept AMLL's "音乐播放进度跳变" messages and
+  // surface both the (diagnostic-only) time and the reliable songId. The
+  // callback receives (currentMs, rawArgs, parsed) where parsed is the
+  // parseAmllProgressJump result.
   function installAmllWarningProbe(onAmllProgress) {
     const target = root.console;
     if (!target || typeof target.warn !== "function") return () => {};
@@ -814,16 +1000,9 @@
             text += (typeof a === "string" ? a : (a == null ? "" : String(a))) + " ";
             if (text.length > 400) break;
           }
-          const marker = text.indexOf("音乐播放进度跳变");
-          if (marker >= 0 && text.includes("[AMLL]")) {
-            const tail = text.slice(marker);
-            const nums = tail.match(/-?\d+\.?\d*/g);
-            if (nums && nums.length >= 2) {
-              const sec = parseFloat(nums[nums.length - 1]);
-              if (Number.isFinite(sec) && sec >= 0 && sec < 100000) {
-                try { onAmllProgress(Math.round(sec * 1000), args); } catch (_) {}
-              }
-            }
+          const parsed = parseAmllProgressJump(text);
+          if (parsed) {
+            try { onAmllProgress(parsed.currentMs, args, parsed); } catch (_) {}
           }
         } catch (_) {}
       }
@@ -861,7 +1040,10 @@
     getCurrentSongId,
     startSongMonitor,
     startProgressListener,
-    installAmllWarningProbe
+    installAmllWarningProbe,
+    parseAmllProgressJump,
+    startProgressDurationMonitor,
+    classifyDurationChange
   };
 
   root.LyricLens = root.LyricLens || {};

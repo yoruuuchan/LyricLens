@@ -91,6 +91,11 @@ function buildScenario(options = {}) {
     playStateCallback = onPlayState;
     return () => {};
   };
+  // Stub the song-change side channels so tests stay deterministic AND so
+  // their underlying setInterval / console.warn hooks don't leak past the
+  // run (a real startProgressDurationMonitor would keep node alive forever).
+  LL.Sync.startProgressDurationMonitor = () => () => {};
+  LL.Sync.installAmllWarningProbe = () => () => {};
   LL.Sync.getCurrentSongId = () => null;
   LL.Lyrics.wrapOnProcessLyrics = () => true;
   LL.Lyrics.installRuntimeLyricsCapture = () => true;
@@ -1157,6 +1162,65 @@ test("readTrustedPlaybackTime rejects invalid AMLL css time without using DOM au
   assert.equal(amllCandidate.status, "invalid-value");
   const audioCandidate = result.candidates.find((item) => item?.name === "dom-audio");
   assert.equal(audioCandidate.trusted, false);
+});
+
+test("readTrustedPlaybackTime prefers NCM progress slider over the AMLL css var", () => {
+  // NCM binds the progress bar <input>.value (seconds) to the real playhead.
+  // It must win over --amll-player-time, which freezes on the prev song's
+  // tail for tracks AMLL can't find TTML for. Here: real pos 90.045s, but
+  // the AMLL var is stuck at 81896ms — we must report the slider's value.
+  const Sync = require("../src/sync");
+  const slider = { value: "90.045", getAttribute: (n) => (n === "max" ? "260" : null) };
+  const amllEl = { style: { getPropertyValue: (n) => (n === "--amll-player-time" ? "81896" : "") } };
+  const fakeContext = {
+    document: {
+      querySelector: (sel) => (sel === '[style*="--amll-player-time"]' ? amllEl : null),
+      querySelectorAll: (sel) => (sel === ".slider-default input" ? [slider] : []),
+      contains: (el) => el === slider
+    },
+    betterncm: { ncm: {} }
+  };
+  const result = Sync.readTrustedPlaybackTime(fakeContext);
+  assert.equal(result.timeMs, 90045);
+  assert.equal(result.source, "NCM.progress-slider");
+  assert.equal(result.reliable, true);
+  const candidate = result.candidates.find((c) => c?.name === "NCM.progress-slider");
+  assert.equal(candidate.status, "available");
+  assert.equal(candidate.reliable, true);
+});
+
+test("readTrustedPlaybackTime ignores a 0..1 volume slider and falls back to AMLL", () => {
+  // A volume slider's max is 1 (or otherwise tiny); it must never be mistaken
+  // for the progress bar. Falling back to AMLL must mark the result unreliable
+  // so the pause-inference heuristic keeps its wall-clock grace window.
+  const Sync = require("../src/sync");
+  const volume = { value: "0.8", getAttribute: (n) => (n === "max" ? "1" : null) };
+  const amllEl = { style: { getPropertyValue: (n) => (n === "--amll-player-time" ? "20310" : "") } };
+  const fakeContext = {
+    document: {
+      querySelector: (sel) => (sel === '[style*="--amll-player-time"]' ? amllEl : null),
+      querySelectorAll: (sel) => (sel === ".slider-default input" ? [volume] : []),
+      contains: (el) => el === volume
+    },
+    betterncm: { ncm: {} }
+  };
+  const result = Sync.readTrustedPlaybackTime(fakeContext);
+  assert.equal(result.timeMs, 20310);
+  assert.equal(result.source, "AMLL.player-css-time");
+  assert.equal(result.reliable, false);
+});
+
+test("readTrustedPlaybackTime reports no trusted time when neither slider nor AMLL var exist", () => {
+  const Sync = require("../src/sync");
+  const fakeContext = {
+    document: { querySelector: () => null, querySelectorAll: () => [], contains: () => false },
+    betterncm: { ncm: {} }
+  };
+  const result = Sync.readTrustedPlaybackTime(fakeContext);
+  assert.equal(result.timeMs, null);
+  assert.equal(result.source, null);
+  const sliderCand = result.candidates.find((c) => c?.name === "NCM.progress-slider");
+  assert.equal(sliderCand.status, "not-found");
 });
 
 test("orderBatchesByPlaybackTime uses default order when no trusted currentMs is known", async () => {

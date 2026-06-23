@@ -302,16 +302,34 @@ Rules:
     return Number.isFinite(nextStart) ? nextStart : null;
   }
 
+  function normalizeTextForCompare(value) {
+    return String(value ?? "").replace(/\s+/g, "").toLowerCase();
+  }
+
   function normalizeCardsWithReport(parsed, lines) {
     const lyricLines = Array.isArray(lines) ? lines : [];
     const validIndexes = new Set(lyricLines.map((line) => line.index));
     const lineByIndex = new Map(lyricLines.map((line, position) => [line.index, { line, position }]));
+    // Reverse lookup: real-lyric-text → {line, position}. Used to rescue
+    // cards where the LLM wrote the right `original`/`line` content but
+    // attached the wrong lineIndex (an "off-by-N labeling" failure). With
+    // this rescue, the card's startMs, original AND translation/points all
+    // stay self-consistent at the position the LLM actually analyzed,
+    // instead of half-drifting to a neighbor's slot.
+    const lineByNormalizedText = new Map();
+    for (let i = 0; i < lyricLines.length; i += 1) {
+      const key = normalizeTextForCompare(lyricLines[i]?.text);
+      if (key && !lineByNormalizedText.has(key)) {
+        lineByNormalizedText.set(key, { line: lyricLines[i], position: i });
+      }
+    }
     const rawCards = Array.isArray(parsed?.cards) ? parsed.cards : [];
     const dropReasons = {
       notObject: 0,
       missingIndex: 0,
       indexNotInLines: 0,
-      relativeIndexRecovered: 0
+      relativeIndexRecovered: 0,
+      indexRescuedByText: 0
     };
     const droppedSamples = [];
     const result = [];
@@ -341,6 +359,25 @@ Rules:
         dropReasons.indexNotInLines += 1;
         if (droppedSamples.length < 3) droppedSamples.push({ reason: "indexNotInLines", index: cardIndex, line: String(card.line ?? "").slice(0, 80) });
         continue;
+      }
+      // Text-based rescue: if the LLM's stated `original`/`line` doesn't
+      // match the lyric text at the resolved index, but DOES match some
+      // other lyric line in this batch verbatim, the LLM almost certainly
+      // analyzed that other line and just mislabeled the index. Move the
+      // card to the matching line so original/translation/startMs all
+      // belong to the same lyric.
+      const llmReportedText = card.original ?? card.line;
+      if (llmReportedText) {
+        const reportedKey = normalizeTextForCompare(llmReportedText);
+        const currentLineKey = normalizeTextForCompare(match?.line?.text);
+        if (reportedKey && currentLineKey && reportedKey !== currentLineKey) {
+          const rescue = lineByNormalizedText.get(reportedKey);
+          if (rescue && rescue.line.index !== resolvedIndex) {
+            resolvedIndex = rescue.line.index;
+            match = rescue;
+            dropReasons.indexRescuedByText += 1;
+          }
+        }
       }
       const lyricLine = match?.line;
       const nextLine = lyricLines[(match?.position ?? -1) + 1];
