@@ -27,3 +27,6 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+
+# Session handoff notes — reference infra details that shouldn't be public
+HANDOFF.md
