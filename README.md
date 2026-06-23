@@ -1,15 +1,39 @@
 # LyricLens
 
+[中文](README.md) · [English](README.en.md)
+
 BetterNCM AI 歌词学习插件 v0.1 MVP。播放英文/日文歌曲时，读取当前歌词，调用用户配置的 OpenAI 兼容 Chat Completions Endpoint 生成学习卡片，并在网易云客户端内显示 fixed 浮层。
 
+## 截图
+
+<p align="center">
+  <img src="screenshots/light.png" alt="LyricLens 浅色主题：跟随歌词显示学习卡片" width="48%" />
+  <img src="screenshots/dark.png"  alt="LyricLens 深色主题：跟随歌词显示学习卡片" width="48%" />
+</p>
+
+<p align="center">
+  <img src="screenshots/dark-advanced.png" alt="设置面板：分析请求 / 模型兼容 高级选项" width="78%" />
+</p>
+
+更多截图见 [`screenshots/`](screenshots/)。
+
 ## 安装
+
+### 推荐：从 GitHub Release 安装
+
+1. 退出网易云音乐。
+2. 到 [Releases](https://github.com/yoruuuchan/LyricLens/releases) 页面下载最新的 `LyricLens-x.y.z.plugin` 文件。
+3. 把 `.plugin` 文件拖进 BetterNCM 的「插件管理」窗口，或解压到 BetterNCM 插件目录下的 `plugins/lyriclens/`。
+4. 重新打开网易云音乐，在 BetterNCM 插件管理中启用 LyricLens。
+
+### 从源码安装（开发者）
 
 1. 退出网易云音乐。
 2. 将本项目整个文件夹复制到 BetterNCM 插件目录，例如 `plugins/lyriclens/`。
 3. 确认目录内包含 `manifest.json`、`main.js`、`src/`、`styles/`。
 4. 重新打开网易云音乐，在 BetterNCM 插件管理中启用 LyricLens。
 
-本项目不需要构建，直接加载源码文件。
+本项目不需要构建，源码可直接加载。如需重新打包 `.plugin`：`npm run build`。
 
 ## 配置
 
