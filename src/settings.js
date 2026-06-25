@@ -4,6 +4,11 @@
   const CONFIG_KEY = "lyriclens.config";
   const LOCAL_STORAGE_KEY = "ll-settings";
   const DEFAULT_SETTINGS = {
+    // Master switch. When false, the plugin stays loaded (its globals,
+    // console-capture hook, and bridge stay live so the user can flip
+    // back on instantly) but skips analysis, hides the overlay, and
+    // stops the capture observer. Persists across NCM restarts.
+    enabled: true,
     apiEndpoint: "",
     apiKey: "",
     modelName: "",
@@ -89,6 +94,7 @@
       ? DEFAULT_SETTINGS.fallbackMaxTokens
       : normalizedFallbackMaxTokens;
     return {
+      enabled: input.enabled !== false,
       apiEndpoint: String(input.apiEndpoint ?? ""),
       apiKey: String(input.apiKey ?? ""),
       modelName: String(input.modelName ?? ""),

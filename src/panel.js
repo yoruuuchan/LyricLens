@@ -1474,7 +1474,15 @@
       setPoppedOut,
       setBridgeStatus,
       getPanelSnapshot,
-      isPoppedOut: () => poppedOut
+      isPoppedOut: () => poppedOut,
+      // Visual on/off — used by the master-enable toggle in the native
+      // config page. We hide the root rather than unmounting because the
+      // panel carries layout state (position, size, auto-follow) we want
+      // to preserve across flips.
+      setHidden: (hidden) => {
+        if (!panel) return;
+        panel.style.display = hidden ? "none" : "";
+      }
     };
     activePanel = instance;
     return instance;

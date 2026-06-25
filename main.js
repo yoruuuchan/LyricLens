@@ -2,7 +2,7 @@
   "use strict";
 
   const LL = root.LyricLens || {};
-  const { Utils, Lyrics, Detect, Api, Cache, Sync, Settings, Panel, Diagnostics, Styles, Capture, Bridge } = LL;
+  const { Utils, Lyrics, Detect, Api, Cache, Sync, Settings, Panel, Diagnostics, Styles, Capture, Bridge, NcmLyricApi } = LL;
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   let settings = Settings.DEFAULT_SETTINGS;
@@ -262,10 +262,16 @@
       // right primitive to let the new song's lyrics arrive on their own
       // schedule, including on re-played tracks where the console-print
       // path is silent.
-      try {
-        analyzeSong(currentSongId, { forceRefresh: false, trigger: "slider-duration" });
-      } catch (_) {}
+      // analyzeSong is async; a synchronous try-catch wouldn't see its
+      // rejections, so handle them via .catch() to suppress unhandled-promise
+      // noise without masking real errors elsewhere.
+      analyzeSong(currentSongId, { forceRefresh: false, trigger: "slider-duration" }).catch(() => {});
     }, diagnostics);
+
+    // Master switch may have been flipped off in a prior session. The
+    // overlay was just created visible; sync it to the persisted state.
+    // currentSongId is still null here, so the retry branch is a no-op.
+    applyEnabledState();
   }
 
   const handleRuntimeLyricsCapturedDebounced = Utils.debounce((detail) => {
@@ -284,6 +290,14 @@
 
   function handleCapturePayload(payload) {
     if (!payload || !Array.isArray(payload.lines) || !payload.lines.length) return;
+    // Master switch: when disabled we drop the capture on the floor. We
+    // do NOT shut down the DOM observer because resumption needs to be
+    // instant — restarting an observer mid-song would miss the lyric
+    // already on screen.
+    if (settings.enabled === false) {
+      diagnostics?.updateState?.({ analysisSkippedReason: "plugin-disabled" });
+      return;
+    }
     const source = payload.source || "unknown";
     const songId = currentSongId || diagnostics?.getState?.()?.songId || payload.songId || null;
 
@@ -820,16 +834,103 @@
       "responseFormatMode", "modelThinkingMode"
     ];
     const analysisSettingsChanged = analysisKeys.some((key) => previousSettings?.[key] !== mergedSettings[key]);
+    const enabledChanged = previousSettings?.enabled !== mergedSettings.enabled;
     settings = await Settings.writeSettings(mergedSettings);
     panel?.setSettings(settings);
+    if (enabledChanged) applyEnabledState();
     diagnostics?.updateState?.({
       lastError: null,
-      settingsChangeAnalyzeTriggered: analysisSettingsChanged && settings.autoAnalyze === true
+      pluginEnabled: settings.enabled !== false,
+      settingsChangeAnalyzeTriggered: analysisSettingsChanged && settings.autoAnalyze === true && settings.enabled !== false
     });
-    if (analysisSettingsChanged && settings.autoAnalyze === true && currentSongId && !suppressedSongId) {
+    if (analysisSettingsChanged && settings.autoAnalyze === true && settings.enabled !== false && currentSongId && !suppressedSongId) {
       retryCurrentSong(currentSongId);
     }
     return settings;
+  }
+
+  // Master enable/disable. Called from handleSettingsSave when the
+  // master switch flips. Hides/shows the overlay and aborts any
+  // in-flight request on disable; on re-enable triggers a fresh
+  // analyze for the current song so the user sees output immediately.
+  function applyEnabledState() {
+    const enabled = settings.enabled !== false;
+    panel?.setHidden?.(!enabled);
+    if (!enabled) {
+      abortActiveRequest({ reason: "plugin-disabled" });
+    } else if (currentSongId && !suppressedSongId) {
+      retryCurrentSong(currentSongId);
+    }
+  }
+
+  // Builds the DOM for BetterNCM's native plugin-config page. Kept
+  // intentionally minimal: a master enable/disable toggle plus a
+  // pointer to the overlay's gear icon for the rest of the settings —
+  // porting every form field here would duplicate UI for no real win.
+  // The plugin tile in BetterNCM's plugin manager only becomes
+  // clickable when this is registered, which is the other reason it
+  // exists.
+  function buildNativeConfigPage() {
+    const doc = root.document;
+    const container = doc.createElement("div");
+    container.style.cssText = "padding:20px 22px;font-family:-apple-system,'PingFang SC','Microsoft YaHei',system-ui,sans-serif;color:inherit;max-width:520px;";
+
+    const meta = root.plugin || {};
+    const title = doc.createElement("div");
+    title.style.cssText = "font-size:18px;font-weight:600;margin-bottom:4px;";
+    title.textContent = meta.name || "LyricLens";
+    container.appendChild(title);
+
+    const subtitle = doc.createElement("div");
+    subtitle.style.cssText = "font-size:12px;opacity:0.6;margin-bottom:20px;";
+    subtitle.textContent = meta.version ? "v" + meta.version : "";
+    if (subtitle.textContent) container.appendChild(subtitle);
+
+    const toggleRow = doc.createElement("label");
+    toggleRow.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid rgba(127,127,127,0.3);border-radius:8px;cursor:pointer;user-select:none;margin-bottom:16px;";
+
+    const toggleText = doc.createElement("div");
+    const toggleLabel = doc.createElement("div");
+    toggleLabel.textContent = "启用 LyricLens";
+    toggleLabel.style.cssText = "font-size:14px;font-weight:500;";
+    const toggleHint = doc.createElement("div");
+    toggleHint.textContent = "关闭后悬浮窗隐藏、不再分析歌词，但插件仍在后台等待开启。";
+    toggleHint.style.cssText = "font-size:12px;opacity:0.65;margin-top:2px;line-height:1.5;";
+    toggleText.appendChild(toggleLabel);
+    toggleText.appendChild(toggleHint);
+    toggleRow.appendChild(toggleText);
+
+    const checkbox = doc.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = settings.enabled !== false;
+    checkbox.style.cssText = "width:18px;height:18px;cursor:pointer;flex-shrink:0;";
+    checkbox.addEventListener("change", async () => {
+      const next = checkbox.checked;
+      checkbox.disabled = true;
+      try {
+        await handleSettingsSave({ enabled: next });
+      } catch (err) {
+        Utils.warn("native-config 保存 enabled 失败", err);
+        checkbox.checked = settings.enabled !== false;
+      } finally {
+        checkbox.disabled = false;
+      }
+    });
+    toggleRow.appendChild(checkbox);
+    container.appendChild(toggleRow);
+
+    const pointer = doc.createElement("div");
+    pointer.style.cssText = "padding:12px 14px;border:1px solid rgba(127,127,127,0.3);border-radius:8px;font-size:13px;line-height:1.6;opacity:0.85;";
+    const pointerHead = doc.createElement("div");
+    pointerHead.textContent = "想调整 API、外观、分析参数？";
+    pointerHead.style.cssText = "margin-bottom:4px;";
+    const pointerBody = doc.createElement("div");
+    pointerBody.textContent = "点击网易云内 LyricLens 悬浮窗右上角的齿轮图标，在那里展开完整设置面板。";
+    pointer.appendChild(pointerHead);
+    pointer.appendChild(pointerBody);
+    container.appendChild(pointer);
+
+    return container;
   }
 
   function closeCurrentSong(songId) {
@@ -941,7 +1042,18 @@
 
   function handleSongChange(songId) {
     if (!songId) return;
-    if (currentSongId !== songId) {
+    if (settings.enabled === false) {
+      // Keep currentSongId up to date so resumption analyzes the right
+      // song, but skip all the reset/analyze plumbing.
+      currentSongId = songId;
+      return;
+    }
+    // Snapshot whether this call is a real song change BEFORE the reset
+    // block clears currentAnalyzeKey — the diagnostics update at the end of
+    // this function needs to know, and the old code read currentAnalyzeKey
+    // after it had already been nulled so lastPanelResetReason was always null.
+    const songChanged = currentSongId !== songId;
+    if (songChanged) {
       // Snapshot the previous song's lyrics text signature AND a precise
       // FNV-1a hash over its preprocessed lines so we can reject stale
       // captures from amll-state / console (which lag NCM's songId flip).
@@ -1031,7 +1143,7 @@
       displayedAnalyzeKey: null,
       displayedCardCount: 0,
       lastSongChangeAt: Date.now(),
-      lastPanelResetReason: currentAnalyzeKey ? "song-change" : null,
+      lastPanelResetReason: songChanged ? "song-change" : null,
       apiStatus: "idle",
       lastError: null,
       analysisSkippedReason: null,
@@ -1182,6 +1294,64 @@
           }
         }
       }
+      // ── Last-resort: query NCM's own lyric API ──
+      // Triggered when every in-process capture source comes up empty AND
+      // we have a real numeric songId. This rescues the scenario Yoru hit
+      // with "One Last Kiss": AMLL's TTML pipeline relies on a third-party
+      // GitHub mirror (mirror.ghproxy.com) which went dark, so AMLL's React
+      // state stayed empty, console-fallback had nothing to scrape, and the
+      // DOM observer found a wrapper with no lines. Going to NCM's own
+      // backend directly bypasses the broken external dependency entirely —
+      // we're inside the NCM renderer, so the request carries NCM's session
+      // cookie and is rate-limited the same way as any other in-app call.
+      if (!lyricResult) {
+        const ncmSongId = Sync.normalizeSongId?.(songId);
+        if (ncmSongId && NcmLyricApi?.fetchLyricsForSongId) {
+          diagnostics?.updateState?.({
+            ncmLyricApiAttemptedAt: Date.now(),
+            ncmLyricApiSongId: ncmSongId
+          });
+          try {
+            const apiResult = await NcmLyricApi.fetchLyricsForSongId(ncmSongId, {
+              signal: activeController?.signal
+            });
+            if (apiResult?.lrc) {
+              const parsedLines = Lyrics.normalizeLyricPayload?.(apiResult.lrc) || [];
+              if (parsedLines.length) {
+                Utils.log("NCM 歌词 API 命中", { songId: ncmSongId, lines: parsedLines.length });
+                lyricResult = {
+                  source: "ncm-lyric-api",
+                  lines: parsedLines,
+                  // payload doubles as the source for fingerprinting / cache key
+                  // downstream — same shape as a capture-pipeline payload so the
+                  // existing fingerprint code works unchanged.
+                  payload: parsedLines
+                };
+                diagnostics?.updateState?.({
+                  captureStatus: "captured-valid-lines",
+                  captureSource: "ncm-lyric-api",
+                  lastCaptureSource: "ncm-lyric-api",
+                  lastCapturedAt: Date.now(),
+                  ncmLyricApiOutcome: "success",
+                  ncmLyricApiLineCount: parsedLines.length
+                });
+              } else {
+                diagnostics?.updateState?.({ ncmLyricApiOutcome: "parsed-empty" });
+              }
+            } else {
+              diagnostics?.updateState?.({ ncmLyricApiOutcome: "no-lyrics" });
+            }
+          } catch (err) {
+            Utils.warn("NCM 歌词 API 调用失败", err);
+            diagnostics?.updateState?.({
+              ncmLyricApiOutcome: "error",
+              ncmLyricApiError: String(err?.message || err).slice(0, 120)
+            });
+          }
+        } else if (!ncmSongId) {
+          diagnostics?.updateState?.({ ncmLyricApiOutcome: "no-song-id" });
+        }
+      }
       if (!lyricResult) {
         // Final attempt: check cache for any cards matching current songId
         const cacheFallback = Capture.readCacheFallback?.(root, {
@@ -1228,7 +1398,10 @@
           sentCount: 0,
           droppedCount: 0
         };
-    const lines = preprocessReport.lines;
+    // `lines` and `language` are `let` (not `const`) so the stale-capture
+    // rescue below can swap in the NCM API's authoritative copy without
+    // recomputing the whole analyze pipeline.
+    let lines = preprocessReport.lines;
     diagnostics?.updateState?.({
       rawLyricLineCount: preprocessReport.rawCount,
       sentLyricLineCount: preprocessReport.sentCount,
@@ -1246,10 +1419,102 @@
       return;
     }
 
-    const language = Detect.detectLanguage(lines.map((line) => line.text));
+    let language = Detect.detectLanguage(lines.map((line) => line.text));
     Utils.log("歌词来源", lyricResult.source);
     Utils.log("语言检测结果", language);
     diagnostics?.updateState?.({ language, lyricsSource: lyricResult.source });
+
+    // ── Stale-capture rescue via NCM API ──
+    // language="other" with a real numeric songId is suspicious: AMLL's
+    // React state can hold the previous song's lyrics when NCM's
+    // PlayState/PlayProgress events are dead, so the capture pipeline
+    // happily pulls Chinese lyrics while NCM actually plays Japanese.
+    // Ask NCM's own backend; if THAT returns en/ja content, trust it
+    // and replace lyricResult/lines/language wholesale.
+    //
+    // Skipped when:
+    //   - the capture source already IS the NCM API (would re-fetch the
+    //     same thing and likely get the same result)
+    //   - no normalizable songId is available
+    if (language === "other"
+        && lyricResult.source !== "ncm-lyric-api"
+        && !String(lyricResult.source || "").endsWith("other-lang-rescue")) {
+      const ncmSongId = Sync.normalizeSongId?.(songId);
+      if (ncmSongId && NcmLyricApi?.fetchLyricsForSongId) {
+        diagnostics?.updateState?.({
+          otherLangRescueAttemptedAt: Date.now(),
+          otherLangRescueSongId: ncmSongId,
+          otherLangRescueCaptureSource: lyricResult.source
+        });
+        try {
+          const apiResult = await NcmLyricApi.fetchLyricsForSongId(ncmSongId, {
+            signal: activeController?.signal
+          });
+          if (apiResult?.lrc) {
+            const apiNormalized = Lyrics.normalizeLyricPayload?.(apiResult.lrc) || [];
+            const apiReport = Lyrics.preprocessLyricLinesWithReport
+              ? Lyrics.preprocessLyricLinesWithReport(apiNormalized, maxLines)
+              : {
+                  lines: Lyrics.preprocessLyricLines(apiNormalized, maxLines),
+                  rawCount: apiNormalized.length,
+                  sentCount: 0,
+                  droppedCount: 0
+                };
+            const apiLines = apiReport.lines || [];
+            if (apiLines.length) {
+              const apiLanguage = Detect.detectLanguage(apiLines.map((l) => l.text));
+              if (apiLanguage !== "other") {
+                Utils.log("AMLL state 内容与 songId 不一致，切到 NCM API 歌词", {
+                  fromSource: lyricResult.source,
+                  fromLang: language,
+                  toLang: apiLanguage,
+                  apiLineCount: apiLines.length
+                });
+                lyricResult = {
+                  source: "ncm-lyric-api+other-lang-rescue",
+                  lines: apiNormalized,
+                  payload: apiNormalized
+                };
+                lines = apiLines;
+                language = apiLanguage;
+                diagnostics?.updateState?.({
+                  language,
+                  lyricsSource: lyricResult.source,
+                  captureStatus: "captured-valid-lines",
+                  captureSource: lyricResult.source,
+                  lastCaptureSource: lyricResult.source,
+                  lastCapturedAt: Date.now(),
+                  otherLangRescueOutcome: "rescued",
+                  otherLangRescueLineCount: apiLines.length,
+                  otherLangRescueLanguage: apiLanguage,
+                  rawLyricLineCount: apiReport.rawCount,
+                  sentLyricLineCount: apiReport.sentCount,
+                  droppedLyricLineCount: apiReport.droppedCount
+                });
+              } else {
+                diagnostics?.updateState?.({
+                  otherLangRescueOutcome: "still-other",
+                  otherLangRescueLanguage: apiLanguage
+                });
+              }
+            } else {
+              diagnostics?.updateState?.({ otherLangRescueOutcome: "empty-after-preprocess" });
+            }
+          } else {
+            diagnostics?.updateState?.({ otherLangRescueOutcome: "no-lyrics" });
+          }
+        } catch (err) {
+          Utils.warn("NCM 歌词 API 二次验证失败", err);
+          diagnostics?.updateState?.({
+            otherLangRescueOutcome: "error",
+            otherLangRescueError: String(err?.message || err).slice(0, 120)
+          });
+        }
+      } else if (!ncmSongId) {
+        diagnostics?.updateState?.({ otherLangRescueOutcome: "no-song-id" });
+      }
+    }
+
     if (language === "other") {
       diagnostics?.updateState?.({ apiStatus: "skipped-other-language", analysisSkippedReason: "language-other", analyzeTriggerBlockedReason: "language-other" });
       panel?.hide();
@@ -2707,8 +2972,35 @@
     return true;
   }
 
-  if (root.plugin?.onLoad) {
-    root.plugin.onLoad(bootstrap);
+  // Reach the BetterNCM `plugin` global. AMLL / InfLinkrs / PluginMarket
+  // all use the bare identifier `plugin` (not `globalThis.plugin`), and
+  // their tiles are clickable while ours isn't — strong evidence that
+  // BetterNCM injects `plugin` as a script-scoped free variable (likely
+  // via `new Function('plugin', code)`), so `root.plugin` is undefined.
+  // `typeof` is the only safe check for a possibly-undeclared name; once
+  // we have a binding we can read its properties normally.
+  let pluginGlobal = null;
+  try {
+    if (typeof plugin !== "undefined" && plugin) pluginGlobal = plugin;
+  } catch (_) { /* ReferenceError swallowed; pluginGlobal stays null */ }
+  if (!pluginGlobal && root.plugin) pluginGlobal = root.plugin;
+  LL.pluginGlobal = pluginGlobal;
+
+  // Register the native config page synchronously at module top level.
+  // BetterNCM's plugin manager checks for onConfig at list-render time,
+  // which happens before any onLoad callback fires; registering inside
+  // bootstrap() leaves the tile inert. buildNativeConfigPage is a
+  // hoisted function declaration so referencing it here is safe.
+  if (pluginGlobal && typeof pluginGlobal.onConfig === "function") {
+    try {
+      pluginGlobal.onConfig(buildNativeConfigPage);
+    } catch (err) {
+      console.warn("[LyricLens]", "plugin.onConfig 注册失败", err);
+    }
+  }
+
+  if (pluginGlobal && typeof pluginGlobal.onLoad === "function") {
+    pluginGlobal.onLoad(bootstrap);
   } else if (root.document?.readyState === "loading") {
     root.document.addEventListener("DOMContentLoaded", bootstrap, { once: true });
   } else {
