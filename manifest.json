@@ -25,6 +25,7 @@
       { "file": "styles.js" },
       { "file": "capture.js" },
       { "file": "bridge.js" },
+      { "file": "ncmLyricApi.js" },
       { "file": "main.js" }
     ]
   }

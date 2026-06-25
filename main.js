@@ -2,7 +2,7 @@
   "use strict";
 
   const LL = root.LyricLens || {};
-  const { Utils, Lyrics, Detect, Api, Cache, Sync, Settings, Panel, Diagnostics, Styles, Capture, Bridge } = LL;
+  const { Utils, Lyrics, Detect, Api, Cache, Sync, Settings, Panel, Diagnostics, Styles, Capture, Bridge, NcmLyricApi } = LL;
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   let settings = Settings.DEFAULT_SETTINGS;
@@ -1292,6 +1292,64 @@
               });
             }
           }
+        }
+      }
+      // ── Last-resort: query NCM's own lyric API ──
+      // Triggered when every in-process capture source comes up empty AND
+      // we have a real numeric songId. This rescues the scenario Yoru hit
+      // with "One Last Kiss": AMLL's TTML pipeline relies on a third-party
+      // GitHub mirror (mirror.ghproxy.com) which went dark, so AMLL's React
+      // state stayed empty, console-fallback had nothing to scrape, and the
+      // DOM observer found a wrapper with no lines. Going to NCM's own
+      // backend directly bypasses the broken external dependency entirely —
+      // we're inside the NCM renderer, so the request carries NCM's session
+      // cookie and is rate-limited the same way as any other in-app call.
+      if (!lyricResult) {
+        const ncmSongId = Sync.normalizeSongId?.(songId);
+        if (ncmSongId && NcmLyricApi?.fetchLyricsForSongId) {
+          diagnostics?.updateState?.({
+            ncmLyricApiAttemptedAt: Date.now(),
+            ncmLyricApiSongId: ncmSongId
+          });
+          try {
+            const apiResult = await NcmLyricApi.fetchLyricsForSongId(ncmSongId, {
+              signal: activeController?.signal
+            });
+            if (apiResult?.lrc) {
+              const parsedLines = Lyrics.normalizeLyricPayload?.(apiResult.lrc) || [];
+              if (parsedLines.length) {
+                Utils.log("NCM 歌词 API 命中", { songId: ncmSongId, lines: parsedLines.length });
+                lyricResult = {
+                  source: "ncm-lyric-api",
+                  lines: parsedLines,
+                  // payload doubles as the source for fingerprinting / cache key
+                  // downstream — same shape as a capture-pipeline payload so the
+                  // existing fingerprint code works unchanged.
+                  payload: parsedLines
+                };
+                diagnostics?.updateState?.({
+                  captureStatus: "captured-valid-lines",
+                  captureSource: "ncm-lyric-api",
+                  lastCaptureSource: "ncm-lyric-api",
+                  lastCapturedAt: Date.now(),
+                  ncmLyricApiOutcome: "success",
+                  ncmLyricApiLineCount: parsedLines.length
+                });
+              } else {
+                diagnostics?.updateState?.({ ncmLyricApiOutcome: "parsed-empty" });
+              }
+            } else {
+              diagnostics?.updateState?.({ ncmLyricApiOutcome: "no-lyrics" });
+            }
+          } catch (err) {
+            Utils.warn("NCM 歌词 API 调用失败", err);
+            diagnostics?.updateState?.({
+              ncmLyricApiOutcome: "error",
+              ncmLyricApiError: String(err?.message || err).slice(0, 120)
+            });
+          }
+        } else if (!ncmSongId) {
+          diagnostics?.updateState?.({ ncmLyricApiOutcome: "no-song-id" });
         }
       }
       if (!lyricResult) {
