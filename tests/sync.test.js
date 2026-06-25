@@ -432,6 +432,37 @@ test("extractSongIdFromConsoleArgs: extracts from mixed args", () => {
   assert.equal(Sync.extractSongIdFromConsoleArgs([9950.134, "Hello"]), null);
 });
 
+test("extractSongIdFromConsoleString: AMLL TTML fetch URL (highest priority)", () => {
+  // Exact log we observed in the field for One Last Kiss.
+  const url = "GET https://mirror.ghproxy.com/https://raw.githubusercontent.com/Steve-xmH/amll-ttml-db/main/ncm-lyrics/track-1824020871.ttml net::ERR_NAME_NOT_RESOLVED";
+  assert.equal(Sync.extractSongIdFromConsoleString(url), "1824020871");
+  assert.equal(Sync.extractSongIdFromConsoleString("/ncm-lyrics/track-666443.ttml"), "666443");
+});
+
+test("extractSongIdFromConsoleString: bare digits inside prose do NOT match", () => {
+  // Regression for the "LyricLens analyzed Beautiful World while NCM was
+  // playing One Last Kiss" bug. NCM logs unrelated playlist / recommendation
+  // ids and the old wide regex picked them up as the current songId.
+  assert.equal(Sync.extractSongIdFromConsoleString("loading playlist 666443"), null);
+  assert.equal(Sync.extractSongIdFromConsoleString("the 666443 is interesting"), null);
+  assert.equal(Sync.extractSongIdFromConsoleString("preload queue: 123456 789012 345678"), null);
+});
+
+test("extractSongIdFromConsoleString: embedded suffix-tagged trackId still matches", () => {
+  // A real AMLL warning embeds the trackId mid-sentence; we still want it.
+  assert.equal(
+    Sync.extractSongIdFromConsoleString("[AMLL] [WARN] 音乐播放进度跳变 431259256_DS7BUI 0 1 244"),
+    "431259256"
+  );
+});
+
+test("extractSongIdFromConsoleString: embedded track- prefix mid-sentence matches", () => {
+  assert.equal(
+    Sync.extractSongIdFromConsoleString("loading lyrics for track-1824020871 from cache"),
+    "1824020871"
+  );
+});
+
 // ── normalizeSongId ──
 
 test("normalizeSongId: track- prefix", () => {
