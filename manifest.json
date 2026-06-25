@@ -1,10 +1,14 @@
 {
   "manifest_version": 1,
   "name": "LyricLens",
+  "slug": "yoru.lyriclens",
   "version": "0.1.0",
   "author": "Yoru",
-  "description": "AI lyrics learning assistant",
-  "betterncm_version": ">=0.2.5",
+  "author_links": ["https://github.com/yoruuuchan"],
+  "description": "AI lyrics learning assistant — turns lyrics into language-learning cards while you listen.",
+  "preview": "preview.png",
+  "type": "extension",
+  "betterncm_version": ">=1.0.0",
   "ncm3-compatible": true,
   "injects": {
     "Main": [
