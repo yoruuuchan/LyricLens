@@ -560,6 +560,13 @@
         continue;
       }
       function wrappedConsoleMethod(...args) {
+        // Reentrancy guard: when our own scan triggers a nested console call
+        // we deliberately swallow it instead of passing through to original.
+        // The trade-off is real: capture-listener warnings inside the wrapper
+        // are lost. But forwarding to original would re-enter any other
+        // plugin that has also wrapped this console method, and pathological
+        // self-recursive console mocks (see lyrics.test.js) would blow the
+        // stack. Net: better to lose a warn than to crash the renderer.
         if (consoleWrapperDepth > 0) return undefined;
         consoleWrapperDepth += 1;
         try {
@@ -692,8 +699,18 @@
     lastCapturedLyricsSource = null;
     lastCapturedLyricsAt = 0;
     lastCapturedLyricsFingerprint = null;
+    // Also wipe the onProcessLyrics-derived buffer. probeSources() and the
+    // legacy getCapturedLyrics() fallback both read these — leaving them
+    // populated after a song change means a stale payload can resurface
+    // through those paths and get attributed to the new song.
+    capturedPayload = null;
+    lastPayload = null;
+    capturedAt = 0;
     try {
       root.__LL_CAPTURED_LYRICS = null;
+    } catch (_) {}
+    try {
+      root.__LYRICLENS_CAPTURED_ON_PROCESS_LYRICS = null;
     } catch (_) {}
   }
 

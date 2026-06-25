@@ -262,9 +262,10 @@
       // right primitive to let the new song's lyrics arrive on their own
       // schedule, including on re-played tracks where the console-print
       // path is silent.
-      try {
-        analyzeSong(currentSongId, { forceRefresh: false, trigger: "slider-duration" });
-      } catch (_) {}
+      // analyzeSong is async; a synchronous try-catch wouldn't see its
+      // rejections, so handle them via .catch() to suppress unhandled-promise
+      // noise without masking real errors elsewhere.
+      analyzeSong(currentSongId, { forceRefresh: false, trigger: "slider-duration" }).catch(() => {});
     }, diagnostics);
 
     // Master switch may have been flipped off in a prior session. The
@@ -1047,7 +1048,12 @@
       currentSongId = songId;
       return;
     }
-    if (currentSongId !== songId) {
+    // Snapshot whether this call is a real song change BEFORE the reset
+    // block clears currentAnalyzeKey — the diagnostics update at the end of
+    // this function needs to know, and the old code read currentAnalyzeKey
+    // after it had already been nulled so lastPanelResetReason was always null.
+    const songChanged = currentSongId !== songId;
+    if (songChanged) {
       // Snapshot the previous song's lyrics text signature AND a precise
       // FNV-1a hash over its preprocessed lines so we can reject stale
       // captures from amll-state / console (which lag NCM's songId flip).
@@ -1137,7 +1143,7 @@
       displayedAnalyzeKey: null,
       displayedCardCount: 0,
       lastSongChangeAt: Date.now(),
-      lastPanelResetReason: currentAnalyzeKey ? "song-change" : null,
+      lastPanelResetReason: songChanged ? "song-change" : null,
       apiStatus: "idle",
       lastError: null,
       analysisSkippedReason: null,
