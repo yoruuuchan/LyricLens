@@ -43,7 +43,7 @@ try {
     Write-Host ("  inject  {0,-22} {1,6} KB" -f $file, $sizeKB)
   }
 
-  foreach ($extra in @('manifest.json', 'package.json', 'README.md')) {
+  foreach ($extra in @('manifest.json', 'package.json', 'README.md', 'preview.png')) {
     $src = Join-Path $root $extra
     if (Test-Path $src) {
       Copy-Item $src -Destination $stage
