@@ -9,6 +9,13 @@
   let diagnostics = null;
   let panel = null;
   let bridge = null;
+  // Random per-session secret. Passed to companion on launch via --bridge-token
+  // and presented in the WS hello frame. Defends against same-machine rogue
+  // connections (notably browser tabs that can dial ws://127.0.0.1:47621).
+  // Not persisted: if NCM restarts while an old companion is still running,
+  // the user relaunches it from the panel — cost of that edge case is one
+  // click, the gain is not having a long-lived secret on disk.
+  let bridgeToken = "";
   let currentSongId = null;
   let suppressedSongId = null;
   let currentAnalysis = null;
@@ -153,10 +160,12 @@
     });
     if (diagnostics.enabled()) panel.mountDebugPanel();
 
+    bridgeToken = generateBridgeToken();
     if (Bridge?.createBridge) {
       bridge = Bridge.createBridge({
         port: Bridge.DEFAULT_PORT,
         clientVersion: "0.1.0",
+        token: bridgeToken,
         getSnapshot: buildBridgeSnapshot,
         onStatusChange: (status) => {
           panel?.setBridgeStatus?.(status);
@@ -654,14 +663,49 @@
     }
   }
 
+  function generateBridgeToken() {
+    // 32 hex chars = 128 bits. crypto.randomUUID() is available in modern
+    // Electron/Chromium; fall back to crypto.getRandomValues. We never fall
+    // back to Math.random — predictable token defeats the whole point.
+    try {
+      const crypto = root.crypto;
+      if (crypto?.randomUUID) return crypto.randomUUID().replace(/-/g, "");
+      if (crypto?.getRandomValues) {
+        const bytes = new Uint8Array(16);
+        crypto.getRandomValues(bytes);
+        return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+      }
+    } catch (_) {}
+    return "";
+  }
+
+  // Accept only an absolute Windows-style path to an .exe, with no characters
+  // that could break out of cmd.exe's quoted-argument parsing or be reserved
+  // in Win32 paths (`" < > | * ?` and control chars). Anything else is a
+  // potential command-injection vector — path is user-typed in the settings
+  // panel, so a stray `"` lets the rest of the string run as a fresh
+  // command (e.g. `C:\x.exe" & calc & rem `).
+  const COMPANION_EXE_PATH_RE = /^[A-Za-z]:\\[^"<>|*?\x00-\x1f]+\.exe$/;
+
   function tryLaunchCompanion() {
     const path = String(settings.companionExePath || "").trim();
     if (!path) return;
+    if (!COMPANION_EXE_PATH_RE.test(path)) {
+      Utils.warn("companion exe path rejected (must be absolute Windows .exe path)", path);
+      diagnostics?.updateState?.({
+        companionLaunchAttemptedAt: Date.now(),
+        companionLaunchRejectedReason: "invalid-path"
+      });
+      return;
+    }
     const exec = root.betterncm?.app?.exec;
     if (typeof exec !== "function") return;
     // Wrap in `start ""` so betterncm.app.exec returns without waiting; the
-    // empty quoted string is the window title (not the path).
-    const cmd = `cmd /c start "" "${path}"`;
+    // empty quoted string is the window title (not the path). Token is hex
+    // only (regex-validated in generateBridgeToken's call sites — empty or
+    // [0-9a-f]+), so it cannot contain shell metacharacters.
+    const tokenArg = /^[0-9a-f]+$/.test(bridgeToken) ? ` --bridge-token=${bridgeToken}` : "";
+    const cmd = `cmd /c start "" "${path}"${tokenArg}`;
     try {
       const result = exec(cmd, false, false);
       if (result && typeof result.catch === "function") {
@@ -694,11 +738,6 @@
         break;
       case "popIn":
         handlePopOutToggle(false);
-        break;
-      case "updateSettings":
-        if (payload && typeof payload === "object") {
-          handleSettingsSave(payload);
-        }
         break;
       default:
         break;

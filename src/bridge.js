@@ -16,7 +16,7 @@
    *   { v:1, type:"pong" }
    *
    * Companion -> Plugin
-   *   { v:1, type:"hello", payload:{ client:"lyriclens-companion", version } }
+   *   { v:1, type:"hello", payload:{ client:"lyriclens-companion", version, token } }
    *   { v:1, type:"command", payload:{ name: CommandName, payload?: any } }
    *   { v:1, type:"ping" }
    *
@@ -26,7 +26,11 @@
    *   "closeCurrentSong"
    *   "retry"
    *   "popIn"            // companion asks plugin to take the UI back into NCM
-   *   "updateSettings"   // payload: Partial<Settings>
+   *
+   * Settings cannot be mutated over the bridge — the companion is a viewer.
+   * The earlier "updateSettings" command was an API-key exfiltration vector
+   * (any local process could redirect apiEndpoint to a server it controls
+   * and read the key off the next Authorization header), so it is gone.
    *
    * BridgeStateSnapshot:
    *   {
@@ -57,8 +61,7 @@
     "toggleAutoFollow",
     "closeCurrentSong",
     "retry",
-    "popIn",
-    "updateSettings"
+    "popIn"
   ]);
 
   function createBridge(options = {}) {
@@ -69,6 +72,11 @@
     const getSnapshot = typeof options.getSnapshot === "function" ? options.getSnapshot : null;
     const clientVersion = String(options.clientVersion || "0.1.0");
     const logger = options.logger || createDefaultLogger();
+    // Shared secret presented in the hello frame so the Rust-side bridge
+    // can refuse rogue local processes (any other process on this machine,
+    // or any browser tab that does `new WebSocket("ws://127.0.0.1:47621/...")`)
+    // before they get to send commands.
+    const token = String(options.token || "");
 
     let ws = null;
     let status = "idle";
@@ -114,7 +122,14 @@
       sendRaw({
         v: PROTOCOL_VERSION,
         type: "hello",
-        payload: { client: "lyriclens-plugin", version: clientVersion }
+        payload: {
+          client: "lyriclens-plugin",
+          version: clientVersion,
+          // Empty string is a valid signal "no token configured" — Rust side
+          // refuses if its expected token is non-empty. We always send the
+          // field so the wire shape is stable.
+          token
+        }
       });
       // Re-publish the current snapshot so a freshly-opened companion
       // doesn't sit on an empty UI waiting for the next state change.

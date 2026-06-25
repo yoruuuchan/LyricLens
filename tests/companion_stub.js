@@ -7,8 +7,9 @@
 // Then in NCM click "弹出到桌面". Every state push is logged; commands typed
 // at the prompt are sent back to the plugin:
 //   next | prev | autofollow | retry | close | popin | ping
-//   theme.dark | theme.light
-//   font.compact | font.standard | font.large
+//
+// Settings can no longer be mutated over the bridge (was an API-key
+// exfil vector); use the in-NCM settings panel instead.
 //
 // Not picked up by `npm test` (no .test.js suffix).
 
@@ -176,7 +177,6 @@ function encodeFrame(opcode, payload) {
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`[stub] listening on ws://127.0.0.1:${PORT}${PATH}`);
   console.log("[stub] commands: next | prev | autofollow | retry | close | popin | ping");
-  console.log("[stub] settings: theme.dark | theme.light | font.compact | font.standard | font.large");
 });
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -211,12 +211,6 @@ function parseCommand(text) {
       return { v: PROTOCOL_VERSION, type: "command", payload: { name: "popIn" } };
     case "ping":
       return { v: PROTOCOL_VERSION, type: "ping" };
-  }
-  if (text.startsWith("theme.")) {
-    return { v: PROTOCOL_VERSION, type: "command", payload: { name: "updateSettings", payload: { panelTheme: text.slice(6) } } };
-  }
-  if (text.startsWith("font.")) {
-    return { v: PROTOCOL_VERSION, type: "command", payload: { name: "updateSettings", payload: { panelFontSize: text.slice(5) } } };
   }
   return null;
 }
