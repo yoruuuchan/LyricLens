@@ -1398,7 +1398,10 @@
           sentCount: 0,
           droppedCount: 0
         };
-    const lines = preprocessReport.lines;
+    // `lines` and `language` are `let` (not `const`) so the stale-capture
+    // rescue below can swap in the NCM API's authoritative copy without
+    // recomputing the whole analyze pipeline.
+    let lines = preprocessReport.lines;
     diagnostics?.updateState?.({
       rawLyricLineCount: preprocessReport.rawCount,
       sentLyricLineCount: preprocessReport.sentCount,
@@ -1416,10 +1419,102 @@
       return;
     }
 
-    const language = Detect.detectLanguage(lines.map((line) => line.text));
+    let language = Detect.detectLanguage(lines.map((line) => line.text));
     Utils.log("歌词来源", lyricResult.source);
     Utils.log("语言检测结果", language);
     diagnostics?.updateState?.({ language, lyricsSource: lyricResult.source });
+
+    // ── Stale-capture rescue via NCM API ──
+    // language="other" with a real numeric songId is suspicious: AMLL's
+    // React state can hold the previous song's lyrics when NCM's
+    // PlayState/PlayProgress events are dead, so the capture pipeline
+    // happily pulls Chinese lyrics while NCM actually plays Japanese.
+    // Ask NCM's own backend; if THAT returns en/ja content, trust it
+    // and replace lyricResult/lines/language wholesale.
+    //
+    // Skipped when:
+    //   - the capture source already IS the NCM API (would re-fetch the
+    //     same thing and likely get the same result)
+    //   - no normalizable songId is available
+    if (language === "other"
+        && lyricResult.source !== "ncm-lyric-api"
+        && !String(lyricResult.source || "").endsWith("other-lang-rescue")) {
+      const ncmSongId = Sync.normalizeSongId?.(songId);
+      if (ncmSongId && NcmLyricApi?.fetchLyricsForSongId) {
+        diagnostics?.updateState?.({
+          otherLangRescueAttemptedAt: Date.now(),
+          otherLangRescueSongId: ncmSongId,
+          otherLangRescueCaptureSource: lyricResult.source
+        });
+        try {
+          const apiResult = await NcmLyricApi.fetchLyricsForSongId(ncmSongId, {
+            signal: activeController?.signal
+          });
+          if (apiResult?.lrc) {
+            const apiNormalized = Lyrics.normalizeLyricPayload?.(apiResult.lrc) || [];
+            const apiReport = Lyrics.preprocessLyricLinesWithReport
+              ? Lyrics.preprocessLyricLinesWithReport(apiNormalized, maxLines)
+              : {
+                  lines: Lyrics.preprocessLyricLines(apiNormalized, maxLines),
+                  rawCount: apiNormalized.length,
+                  sentCount: 0,
+                  droppedCount: 0
+                };
+            const apiLines = apiReport.lines || [];
+            if (apiLines.length) {
+              const apiLanguage = Detect.detectLanguage(apiLines.map((l) => l.text));
+              if (apiLanguage !== "other") {
+                Utils.log("AMLL state 内容与 songId 不一致，切到 NCM API 歌词", {
+                  fromSource: lyricResult.source,
+                  fromLang: language,
+                  toLang: apiLanguage,
+                  apiLineCount: apiLines.length
+                });
+                lyricResult = {
+                  source: "ncm-lyric-api+other-lang-rescue",
+                  lines: apiNormalized,
+                  payload: apiNormalized
+                };
+                lines = apiLines;
+                language = apiLanguage;
+                diagnostics?.updateState?.({
+                  language,
+                  lyricsSource: lyricResult.source,
+                  captureStatus: "captured-valid-lines",
+                  captureSource: lyricResult.source,
+                  lastCaptureSource: lyricResult.source,
+                  lastCapturedAt: Date.now(),
+                  otherLangRescueOutcome: "rescued",
+                  otherLangRescueLineCount: apiLines.length,
+                  otherLangRescueLanguage: apiLanguage,
+                  rawLyricLineCount: apiReport.rawCount,
+                  sentLyricLineCount: apiReport.sentCount,
+                  droppedLyricLineCount: apiReport.droppedCount
+                });
+              } else {
+                diagnostics?.updateState?.({
+                  otherLangRescueOutcome: "still-other",
+                  otherLangRescueLanguage: apiLanguage
+                });
+              }
+            } else {
+              diagnostics?.updateState?.({ otherLangRescueOutcome: "empty-after-preprocess" });
+            }
+          } else {
+            diagnostics?.updateState?.({ otherLangRescueOutcome: "no-lyrics" });
+          }
+        } catch (err) {
+          Utils.warn("NCM 歌词 API 二次验证失败", err);
+          diagnostics?.updateState?.({
+            otherLangRescueOutcome: "error",
+            otherLangRescueError: String(err?.message || err).slice(0, 120)
+          });
+        }
+      } else if (!ncmSongId) {
+        diagnostics?.updateState?.({ otherLangRescueOutcome: "no-song-id" });
+      }
+    }
+
     if (language === "other") {
       diagnostics?.updateState?.({ apiStatus: "skipped-other-language", analysisSkippedReason: "language-other", analyzeTriggerBlockedReason: "language-other" });
       panel?.hide();
