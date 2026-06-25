@@ -266,6 +266,11 @@
         analyzeSong(currentSongId, { forceRefresh: false, trigger: "slider-duration" });
       } catch (_) {}
     }, diagnostics);
+
+    // Master switch may have been flipped off in a prior session. The
+    // overlay was just created visible; sync it to the persisted state.
+    // currentSongId is still null here, so the retry branch is a no-op.
+    applyEnabledState();
   }
 
   const handleRuntimeLyricsCapturedDebounced = Utils.debounce((detail) => {
@@ -284,6 +289,14 @@
 
   function handleCapturePayload(payload) {
     if (!payload || !Array.isArray(payload.lines) || !payload.lines.length) return;
+    // Master switch: when disabled we drop the capture on the floor. We
+    // do NOT shut down the DOM observer because resumption needs to be
+    // instant — restarting an observer mid-song would miss the lyric
+    // already on screen.
+    if (settings.enabled === false) {
+      diagnostics?.updateState?.({ analysisSkippedReason: "plugin-disabled" });
+      return;
+    }
     const source = payload.source || "unknown";
     const songId = currentSongId || diagnostics?.getState?.()?.songId || payload.songId || null;
 
@@ -820,16 +833,103 @@
       "responseFormatMode", "modelThinkingMode"
     ];
     const analysisSettingsChanged = analysisKeys.some((key) => previousSettings?.[key] !== mergedSettings[key]);
+    const enabledChanged = previousSettings?.enabled !== mergedSettings.enabled;
     settings = await Settings.writeSettings(mergedSettings);
     panel?.setSettings(settings);
+    if (enabledChanged) applyEnabledState();
     diagnostics?.updateState?.({
       lastError: null,
-      settingsChangeAnalyzeTriggered: analysisSettingsChanged && settings.autoAnalyze === true
+      pluginEnabled: settings.enabled !== false,
+      settingsChangeAnalyzeTriggered: analysisSettingsChanged && settings.autoAnalyze === true && settings.enabled !== false
     });
-    if (analysisSettingsChanged && settings.autoAnalyze === true && currentSongId && !suppressedSongId) {
+    if (analysisSettingsChanged && settings.autoAnalyze === true && settings.enabled !== false && currentSongId && !suppressedSongId) {
       retryCurrentSong(currentSongId);
     }
     return settings;
+  }
+
+  // Master enable/disable. Called from handleSettingsSave when the
+  // master switch flips. Hides/shows the overlay and aborts any
+  // in-flight request on disable; on re-enable triggers a fresh
+  // analyze for the current song so the user sees output immediately.
+  function applyEnabledState() {
+    const enabled = settings.enabled !== false;
+    panel?.setHidden?.(!enabled);
+    if (!enabled) {
+      abortActiveRequest({ reason: "plugin-disabled" });
+    } else if (currentSongId && !suppressedSongId) {
+      retryCurrentSong(currentSongId);
+    }
+  }
+
+  // Builds the DOM for BetterNCM's native plugin-config page. Kept
+  // intentionally minimal: a master enable/disable toggle plus a
+  // pointer to the overlay's gear icon for the rest of the settings —
+  // porting every form field here would duplicate UI for no real win.
+  // The plugin tile in BetterNCM's plugin manager only becomes
+  // clickable when this is registered, which is the other reason it
+  // exists.
+  function buildNativeConfigPage() {
+    const doc = root.document;
+    const container = doc.createElement("div");
+    container.style.cssText = "padding:20px 22px;font-family:-apple-system,'PingFang SC','Microsoft YaHei',system-ui,sans-serif;color:inherit;max-width:520px;";
+
+    const meta = root.plugin || {};
+    const title = doc.createElement("div");
+    title.style.cssText = "font-size:18px;font-weight:600;margin-bottom:4px;";
+    title.textContent = meta.name || "LyricLens";
+    container.appendChild(title);
+
+    const subtitle = doc.createElement("div");
+    subtitle.style.cssText = "font-size:12px;opacity:0.6;margin-bottom:20px;";
+    subtitle.textContent = meta.version ? "v" + meta.version : "";
+    if (subtitle.textContent) container.appendChild(subtitle);
+
+    const toggleRow = doc.createElement("label");
+    toggleRow.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid rgba(127,127,127,0.3);border-radius:8px;cursor:pointer;user-select:none;margin-bottom:16px;";
+
+    const toggleText = doc.createElement("div");
+    const toggleLabel = doc.createElement("div");
+    toggleLabel.textContent = "启用 LyricLens";
+    toggleLabel.style.cssText = "font-size:14px;font-weight:500;";
+    const toggleHint = doc.createElement("div");
+    toggleHint.textContent = "关闭后悬浮窗隐藏、不再分析歌词，但插件仍在后台等待开启。";
+    toggleHint.style.cssText = "font-size:12px;opacity:0.65;margin-top:2px;line-height:1.5;";
+    toggleText.appendChild(toggleLabel);
+    toggleText.appendChild(toggleHint);
+    toggleRow.appendChild(toggleText);
+
+    const checkbox = doc.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = settings.enabled !== false;
+    checkbox.style.cssText = "width:18px;height:18px;cursor:pointer;flex-shrink:0;";
+    checkbox.addEventListener("change", async () => {
+      const next = checkbox.checked;
+      checkbox.disabled = true;
+      try {
+        await handleSettingsSave({ enabled: next });
+      } catch (err) {
+        Utils.warn("native-config 保存 enabled 失败", err);
+        checkbox.checked = settings.enabled !== false;
+      } finally {
+        checkbox.disabled = false;
+      }
+    });
+    toggleRow.appendChild(checkbox);
+    container.appendChild(toggleRow);
+
+    const pointer = doc.createElement("div");
+    pointer.style.cssText = "padding:12px 14px;border:1px solid rgba(127,127,127,0.3);border-radius:8px;font-size:13px;line-height:1.6;opacity:0.85;";
+    const pointerHead = doc.createElement("div");
+    pointerHead.textContent = "想调整 API、外观、分析参数？";
+    pointerHead.style.cssText = "margin-bottom:4px;";
+    const pointerBody = doc.createElement("div");
+    pointerBody.textContent = "点击网易云内 LyricLens 悬浮窗右上角的齿轮图标，在那里展开完整设置面板。";
+    pointer.appendChild(pointerHead);
+    pointer.appendChild(pointerBody);
+    container.appendChild(pointer);
+
+    return container;
   }
 
   function closeCurrentSong(songId) {
@@ -941,6 +1041,12 @@
 
   function handleSongChange(songId) {
     if (!songId) return;
+    if (settings.enabled === false) {
+      // Keep currentSongId up to date so resumption analyzes the right
+      // song, but skip all the reset/analyze plumbing.
+      currentSongId = songId;
+      return;
+    }
     if (currentSongId !== songId) {
       // Snapshot the previous song's lyrics text signature AND a precise
       // FNV-1a hash over its preprocessed lines so we can reject stale
@@ -2707,8 +2813,35 @@
     return true;
   }
 
-  if (root.plugin?.onLoad) {
-    root.plugin.onLoad(bootstrap);
+  // Reach the BetterNCM `plugin` global. AMLL / InfLinkrs / PluginMarket
+  // all use the bare identifier `plugin` (not `globalThis.plugin`), and
+  // their tiles are clickable while ours isn't — strong evidence that
+  // BetterNCM injects `plugin` as a script-scoped free variable (likely
+  // via `new Function('plugin', code)`), so `root.plugin` is undefined.
+  // `typeof` is the only safe check for a possibly-undeclared name; once
+  // we have a binding we can read its properties normally.
+  let pluginGlobal = null;
+  try {
+    if (typeof plugin !== "undefined" && plugin) pluginGlobal = plugin;
+  } catch (_) { /* ReferenceError swallowed; pluginGlobal stays null */ }
+  if (!pluginGlobal && root.plugin) pluginGlobal = root.plugin;
+  LL.pluginGlobal = pluginGlobal;
+
+  // Register the native config page synchronously at module top level.
+  // BetterNCM's plugin manager checks for onConfig at list-render time,
+  // which happens before any onLoad callback fires; registering inside
+  // bootstrap() leaves the tile inert. buildNativeConfigPage is a
+  // hoisted function declaration so referencing it here is safe.
+  if (pluginGlobal && typeof pluginGlobal.onConfig === "function") {
+    try {
+      pluginGlobal.onConfig(buildNativeConfigPage);
+    } catch (err) {
+      console.warn("[LyricLens]", "plugin.onConfig 注册失败", err);
+    }
+  }
+
+  if (pluginGlobal && typeof pluginGlobal.onLoad === "function") {
+    pluginGlobal.onLoad(bootstrap);
   } else if (root.document?.readyState === "loading") {
     root.document.addEventListener("DOMContentLoaded", bootstrap, { once: true });
   } else {
