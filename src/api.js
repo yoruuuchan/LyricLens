@@ -572,6 +572,56 @@ Rules:
     let responseFormatUnsupported = false;
     let responseFormatFallbackAttempted = false;
     const wantStreaming = typeof onStreamCard === "function";
+    let parseRetryUsed = false;
+
+    // Either marks the run for one auto-retry (returns "retry") or throws the
+    // original error. Retryable stages are model/stream-quality failures that a
+    // fresh sampling can plausibly fix; token-cap truncation is excluded since
+    // re-sending the identical request will hit the same wall.
+    const PARSE_RETRYABLE_STAGES = new Set([
+      "missing-content-stream",
+      "content-json-stream",
+      "missing-content",
+      "content-json",
+      "response-json"
+    ]);
+    function handleParseError(parseErr, fullContent) {
+      if (fullContent !== undefined && fullContent !== null) {
+        parseErr.fullContent = fullContent;
+      }
+      const retryable =
+        !parseRetryUsed &&
+        !parseErr.finishReasonWasLength &&
+        PARSE_RETRYABLE_STAGES.has(parseErr.stage);
+      if (retryable) {
+        parseRetryUsed = true;
+        safeUpdateDiagnostics({
+          parseRetryAttempted: true,
+          parseRetryStage: parseErr.stage,
+          parseRetryFirstError: String(parseErr.message || "").slice(0, 180)
+        });
+        try {
+          console.warn("[LyricLens] parse failure, auto-retrying once", {
+            stage: parseErr.stage,
+            message: parseErr.message,
+            rawContentLength: parseErr.rawContentLength ?? null,
+            extractedJsonStrategy: parseErr.extractedJsonStrategy ?? null
+          });
+        } catch (_) {}
+        return "retry";
+      }
+      if (fullContent) {
+        try {
+          const len = String(fullContent).length;
+          const note = parseRetryUsed
+            ? "after retry"
+            : (parseErr.finishReasonWasLength ? "no retry (truncated)" : `no retry (${parseErr.stage})`);
+          console.error(`[LyricLens] parse failure ${note}, raw content (length=${len}):`);
+          console.error(fullContent);
+        } catch (_) {}
+      }
+      throw parseErr;
+    }
 
     async function sendRequest(rfModeOverride) {
       const rfMode = rfModeOverride !== undefined ? rfModeOverride : currentRfMode;
@@ -617,7 +667,7 @@ Rules:
     let attemptCount = 0;
 
     try {
-      while (attemptCount < 2) {
+      while (attemptCount < 3) {
         attemptCount += 1;
         const bodyString = JSON.stringify(body);
 
@@ -692,12 +742,13 @@ Rules:
           });
 
           if (!content) {
-            throw new ApiParseError("API 流式返回内容为空", {
+            const parseErr = new ApiParseError("API 流式返回内容为空", {
               stage: "missing-content-stream",
               responseTextSample: contentSample,
               contentSample,
               requestUrl
             });
+            if (handleParseError(parseErr, content) === "retry") continue;
           }
 
           const parseReport = parseCompletionJsonWithReport(content);
@@ -734,7 +785,7 @@ Rules:
           parseErr.rawContentLength = content.length;
           parseErr.extractedJsonStrategy = parseReport.strategy || "stream";
           if (streamFinishReason === "length") parseErr.message = "模型输出被截断，JSON 无法解析";
-          throw parseErr;
+          if (handleParseError(parseErr, content) === "retry") continue;
         }
 
         // Non-streaming path (or server didn't honor stream:true)
@@ -749,12 +800,13 @@ Rules:
         try {
           responseJson = JSON.parse(responseText);
         } catch (_) {
-          throw new ApiParseError("API 响应不是合法 JSON", {
+          const parseErr = new ApiParseError("API 响应不是合法 JSON", {
             stage: "response-json",
             responseTextSample,
             contentSample: responseTextSample,
             requestUrl
           });
+          if (handleParseError(parseErr, responseText) === "retry") continue;
         }
 
         const usage = responseJson?.usage;
@@ -778,12 +830,13 @@ Rules:
         safeUpdateDiagnostics({ lastParsedContentSample: contentSample });
 
         if (!content) {
-          throw new ApiParseError("API 返回内容为空", {
+          const parseErr = new ApiParseError("API 返回内容为空", {
             stage: "missing-content",
             responseTextSample,
             contentSample,
             requestUrl
           });
+          if (handleParseError(parseErr, content) === "retry") continue;
         }
 
         const parseReport = parseCompletionJsonWithReport(content);
@@ -822,7 +875,7 @@ Rules:
         if (finishReason === "length") {
           parseErr.message = "模型输出被截断，JSON 无法解析";
         }
-        throw parseErr;
+        if (handleParseError(parseErr, content) === "retry") continue;
       }
     } catch (err) {
       if (timedOut && abortErrorName(err)) {
