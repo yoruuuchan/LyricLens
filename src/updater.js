@@ -163,6 +163,44 @@
       }
     }
 
+    // SHA-256 integrity check. The .plugin file is loaded as JS by BetterNCM,
+    // so a swapped/MITM-ed payload is full RCE. The Worker exposes
+    // `asset_digest` ("sha256:<hex>") from the GitHub Releases API; we verify
+    // before writing. If the field is missing (older Worker, or GitHub omitted
+    // it) we fall back to size-only with a warning rather than blocking the
+    // update — refusing to update is worse than the prior behavior.
+    const expectedDigestRaw = String(payload?.asset_digest || "").trim().toLowerCase();
+    const digestMatch = expectedDigestRaw.match(/^sha256:([a-f0-9]{64})$/);
+    if (digestMatch) {
+      const subtle = root.crypto?.subtle || (typeof crypto !== "undefined" ? crypto.subtle : null);
+      if (!subtle?.digest) {
+        return { ok: false, error: "无法校验文件完整性（crypto.subtle 不可用）" };
+      }
+      let actualHex;
+      try {
+        const buf = await blob.arrayBuffer();
+        const hashBuf = await subtle.digest("SHA-256", buf);
+        actualHex = Array.from(new Uint8Array(hashBuf))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+      } catch (err) {
+        return { ok: false, error: `SHA-256 计算失败: ${err?.message || err}` };
+      }
+      const expectedHex = digestMatch[1];
+      if (actualHex !== expectedHex) {
+        return {
+          ok: false,
+          error: `SHA-256 校验失败（下载 ${actualHex.slice(0, 12)}… / 预期 ${expectedHex.slice(0, 12)}…）`
+        };
+      }
+    } else if (expectedDigestRaw) {
+      // Worker returned a digest but in an unexpected shape — log and continue.
+      try { console.warn("[LyricLens] 未识别的 asset_digest 格式，跳过 SHA-256 校验:", expectedDigestRaw); } catch (_) {}
+    } else {
+      // No digest field at all (legacy Worker or GitHub didn't expose one).
+      try { console.warn("[LyricLens] asset_digest 缺失，仅依赖大小校验"); } catch (_) {}
+    }
+
     onProgress("verify-done", { bytes: downloadedBytes });
 
     // Atomic-ish replace: write to .plugin.download → remove old →
