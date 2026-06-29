@@ -612,12 +612,23 @@ Rules:
       }
       if (fullContent) {
         try {
-          const len = String(fullContent).length;
+          const text = String(fullContent);
+          const len = text.length;
+          // Truncate by default — full model output usually contains lyrics +
+          // translations + learning points. Users frequently copy console logs
+          // when filing feedback, so dumping the whole payload leaks personal
+          // / copyrighted content unnecessarily. Head+tail is enough to debug
+          // most JSON-shape parse failures.
+          const HEAD = 800;
+          const TAIL = 200;
+          const sample = len > HEAD + TAIL
+            ? `${text.slice(0, HEAD)}\n…[elided ${len - HEAD - TAIL} chars]…\n${text.slice(-TAIL)}`
+            : text;
           const note = parseRetryUsed
             ? "after retry"
             : (parseErr.finishReasonWasLength ? "no retry (truncated)" : `no retry (${parseErr.stage})`);
-          console.error(`[LyricLens] parse failure ${note}, raw content (length=${len}):`);
-          console.error(fullContent);
+          console.error(`[LyricLens] parse failure ${note}, raw content (length=${len}, showing head ${HEAD}+tail ${TAIL}):`);
+          console.error(sample);
         } catch (_) {}
       }
       throw parseErr;
