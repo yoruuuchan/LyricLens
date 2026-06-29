@@ -70,7 +70,7 @@ function downloadRedirect() {
 
 // Bump CACHE_REV after a release to invalidate edge cache without waiting
 // out CACHE_TTL_SECONDS. cache.default keys on the full Request URL.
-const CACHE_REV = "v5";
+const CACHE_REV = "v7";
 
 async function latestJsonResponse(ctx) {
   const cache = caches.default;
@@ -954,7 +954,8 @@ const LANDING_HTML = `<!doctype html>
     display: block;
   }
   /* Screenshot row — README uses <p align="center"> with multiple <img>.
-     Flex makes them sit side-by-side and wrap on narrow viewports. */
+     GitHub wraps each <img> in an <a target="_blank">, so the flex
+     items are the <a>s, not the <img>s. */
   .readme-content p[align="center"] {
     display: flex;
     flex-wrap: wrap;
@@ -962,10 +963,20 @@ const LANDING_HTML = `<!doctype html>
     align-items: flex-start;
     margin: 20px 0 32px;
   }
-  .readme-content p[align="center"] img {
+  .readme-content p[align="center"] > * {
     flex: 1 1 280px;
     min-width: 0;
     margin: 0;
+    border-bottom: 0;
+    padding: 0;
+  }
+  .readme-content p[align="center"] img {
+    width: 100%;
+    display: block;
+    margin: 0;
+  }
+  .readme-content p[align="center"] a {
+    line-height: 0;
   }
   .readme-content ol li,
   .readme-content ul li { margin-bottom: 8px; }
