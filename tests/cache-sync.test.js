@@ -19,19 +19,38 @@ test("builds cache key with endpoint hash and prompt version", () => {
     lyricsHash: "abc",
     apiEndpoint: "https://example.com/v1/chat/completions",
     modelName: "model-a",
-    promptVersion: "v1"
+    promptVersion: "v1",
+    cardGenerationMode: "per-line"
   });
   const keyB = buildCacheKey({
     songId: 123,
     lyricsHash: "abc",
     apiEndpoint: "https://another.example/v1/chat/completions",
     modelName: "model-a",
-    promptVersion: "v1"
+    promptVersion: "v1",
+    cardGenerationMode: "per-line"
   });
 
   assert.notEqual(keyA, keyB);
-  assert.match(keyA, /^123:abc:[a-z0-9]+:model-a:v1$/);
+  assert.match(keyA, /^123:abc:[a-z0-9]+:model-a:v1:per-line$/);
   assert.equal(hashString("same"), hashString("same"));
+});
+
+test("cardGenerationMode is part of the cache key", () => {
+  const base = {
+    songId: 123,
+    lyricsHash: "abc",
+    apiEndpoint: "https://example.com/v1/chat/completions",
+    modelName: "model-a",
+    promptVersion: "v1"
+  };
+  const perLine = buildCacheKey({ ...base, cardGenerationMode: "per-line" });
+  const selected = buildCacheKey({ ...base, cardGenerationMode: "selected" });
+  const defaulted = buildCacheKey(base);
+
+  assert.notEqual(perLine, selected);
+  // Omitting the mode defaults to per-line to keep old callers stable.
+  assert.equal(defaulted, perLine);
 });
 
 test("memory cache stores and reuses values by key", () => {

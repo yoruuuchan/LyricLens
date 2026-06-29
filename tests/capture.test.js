@@ -261,7 +261,8 @@ test("readCacheFallback returns cached cards when songId+lyricsHash match", () =
     lyricsHash,
     apiEndpoint: "https://api.test/v1",
     modelName: "test-model",
-    promptVersion: "v2"
+    promptVersion: "v2",
+    cardGenerationMode: "per-line"
   });
 
   const cards = [{ index: 0, original: "Hello", translation: "你好" }];
@@ -320,7 +321,8 @@ test("captureLyrics records cache hit diagnostics but does not return cache as a
     lyricsHash,
     apiEndpoint: "https://api.test/v1",
     modelName: "test-model",
-    promptVersion: "v2"
+    promptVersion: "v2",
+    cardGenerationMode: "per-line"
   });
   Cache.defaultCache.set(key, [{ index: 0, original: "Old cached line", translation: "旧缓存" }]);
 

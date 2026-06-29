@@ -581,7 +581,8 @@
         lyricsHash,
         apiEndpoint: settings.apiEndpoint,
         modelName: settings.modelName,
-        promptVersion: Api?.PROMPT_VERSION || "v2"
+        promptVersion: Api?.PROMPT_VERSION || "v2",
+        cardGenerationMode: settings.cardGenerationMode === "selected" ? "selected" : "per-line"
       }));
     }
     if (songId && lyricsHash) {

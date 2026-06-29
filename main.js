@@ -813,7 +813,8 @@
       lyricsHash,
       apiEndpoint: settings.apiEndpoint,
       modelName: settings.modelName,
-      promptVersion: Api.PROMPT_VERSION
+      promptVersion: Api.PROMPT_VERSION,
+      cardGenerationMode: settings.cardGenerationMode === "selected" ? "selected" : "per-line"
     });
 
     // Only promote if the captured key is the currently settled one (cards exist)
@@ -1742,7 +1743,8 @@
       lyricsHash,
       apiEndpoint: settings.apiEndpoint,
       modelName: settings.modelName,
-      promptVersion: Api.PROMPT_VERSION
+      promptVersion: Api.PROMPT_VERSION,
+      cardGenerationMode
     });
 
     diagnostics?.updateState?.({

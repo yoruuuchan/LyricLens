@@ -15,13 +15,17 @@
     return (hash >>> 0).toString(36);
   }
 
-  function buildCacheKey({ songId, lyricsHash, apiEndpoint, modelName, promptVersion }) {
+  function buildCacheKey({ songId, lyricsHash, apiEndpoint, modelName, promptVersion, cardGenerationMode }) {
     return [
       String(songId ?? ""),
       String(lyricsHash ?? ""),
       hashString(apiEndpoint),
       String(modelName ?? ""),
-      String(promptVersion ?? "")
+      String(promptVersion ?? ""),
+      // Output contract differs between per-line and selected — analyzing the
+      // same song in different modes must not collide. Defaults to per-line
+      // to preserve key shape for older callers/tests that don't pass it.
+      String(cardGenerationMode ?? "per-line")
     ].join(":");
   }
 
