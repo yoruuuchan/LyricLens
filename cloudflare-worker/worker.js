@@ -33,7 +33,7 @@ export default {
     try {
       switch (url.pathname) {
         case "/":
-          return landingResponse();
+          return await landingResponse(ctx);
         case "/download":
         case "/download/":
           return downloadRedirect();
@@ -70,7 +70,7 @@ function downloadRedirect() {
 
 // Bump CACHE_REV after a release to invalidate edge cache without waiting
 // out CACHE_TTL_SECONDS. cache.default keys on the full Request URL.
-const CACHE_REV = "v2";
+const CACHE_REV = "v3";
 
 async function latestJsonResponse(ctx) {
   const cache = caches.default;
@@ -155,8 +155,53 @@ async function fetchLatestPayload() {
   };
 }
 
-function landingResponse() {
-  return new Response(LANDING_HTML, { status: 200, headers: htmlHeaders(60) });
+async function landingResponse(ctx) {
+  const readmeHtml = await fetchReadmeHtml(ctx);
+  const body = LANDING_HTML.replace("<!--README_HTML-->", readmeHtml || "");
+  return new Response(body, { status: 200, headers: htmlHeaders(60) });
+}
+
+async function fetchReadmeHtml(ctx) {
+  const cache = caches.default;
+  const cacheKey = new Request(`https://cache.lyriclens/readme?rev=${CACHE_REV}`);
+  const cached = await cache.match(cacheKey);
+  if (cached) return await cached.text();
+
+  const upstream = await fetch(`https://api.github.com/repos/${REPO}/readme`, {
+    headers: {
+      "User-Agent": USER_AGENT,
+      "Accept": "application/vnd.github.html",
+    },
+    cf: { cacheTtl: CACHE_TTL_SECONDS, cacheEverything: true },
+  });
+  if (!upstream.ok) return "";
+  let html = await upstream.text();
+
+  // Trim from "调试日志" section onward — that's where the README turns
+  // developer-facing (logs / diagnostics / verification template / npm test).
+  const marker = html.indexOf("调试日志");
+  if (marker > 0) {
+    const h2Start = html.lastIndexOf("<h2", marker);
+    if (h2Start > 0) html = html.slice(0, h2Start);
+  }
+
+  // Rewrite relative URLs (screenshots, links) to absolute GitHub URLs so
+  // they resolve when the README is served from our domain.
+  html = html.replace(
+    /(src|href)="(?!https?:|#|\/\/|mailto:)([^"]+)"/g,
+    `$1="https://raw.githubusercontent.com/${REPO}/main/$2"`
+  );
+
+  // Drop the language-switcher line at the very top — landing already
+  // shows brand context elsewhere.
+  html = html.replace(/<p>[^<]*\[中文\][\s\S]*?<\/p>/, "");
+  html = html.replace(/<h1[^>]*>[^<]*LyricLens[^<]*<\/h1>/i, "");
+
+  const resp = new Response(html, {
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
+  ctx.waitUntil(cache.put(cacheKey, resp.clone()));
+  return html;
 }
 
 async function feedbackResponse(request, env) {
@@ -340,9 +385,36 @@ const LANDING_HTML = `<!doctype html>
 <meta name="theme-color" content="#E8ECF3" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0B1020" media="(prefers-color-scheme: dark)">
 <title>lyriclens · 灯と夜</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Zen+Kaku+Gothic+New:wght@400;500&display=swap">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preload" as="font" type="font/woff2" crossorigin href="https://cdn.jsdelivr.net/npm/geist@1/dist/fonts/geist-sans/Geist-Variable.woff2">
+<link rel="preload" as="font" type="font/woff2" crossorigin href="https://cdn.jsdelivr.net/npm/geist@1/dist/fonts/geist-mono/GeistMono-Variable.woff2">
+<style>
+  /* font-display: block keeps text invisible until the font lands —
+     no fallback flash. Jsdelivr first, unpkg as backup origin. */
+  @font-face {
+    font-family: "Geist";
+    src: url("https://cdn.jsdelivr.net/npm/geist@1/dist/fonts/geist-sans/Geist-Variable.woff2") format("woff2-variations"),
+         url("https://unpkg.com/geist@1/dist/fonts/geist-sans/Geist-Variable.woff2") format("woff2-variations");
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: block;
+  }
+  @font-face {
+    font-family: "Geist Mono";
+    src: url("https://cdn.jsdelivr.net/npm/geist@1/dist/fonts/geist-mono/GeistMono-Variable.woff2") format("woff2-variations"),
+         url("https://unpkg.com/geist@1/dist/fonts/geist-mono/GeistMono-Variable.woff2") format("woff2-variations");
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: block;
+  }
+  @font-face {
+    font-family: "Zen Kaku Gothic New";
+    src: url("https://cdn.jsdelivr.net/npm/@fontsource/zen-kaku-gothic-new@5.0.13/files/zen-kaku-gothic-new-japanese-400-normal.woff2") format("woff2");
+    font-weight: 400;
+    font-style: normal;
+    font-display: block;
+  }
+</style>
 <style>
   :root {
     --font-ui: "Geist", "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
@@ -405,8 +477,7 @@ const LANDING_HTML = `<!doctype html>
       var(--bg-base);
   }
 
-  @media (prefers-color-scheme: dark) {
-    :root {
+  [data-theme="yoru"] {
       --bg-base: #0B1020;
       --bg-surface: #131A2E;
       --bg-elevated: #1B2340;
@@ -450,15 +521,14 @@ const LANDING_HTML = `<!doctype html>
         radial-gradient(120% 80% at 80% -10%, rgba(122, 149, 250, 0.10), transparent 60%),
         radial-gradient(90% 70% at 0% 100%, rgba(240, 120, 48, 0.06), transparent 55%),
         var(--bg-base);
-    }
   }
 
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
     font-family: var(--font-ui);
-    font-size: 13px;
-    line-height: 1.5;
+    font-size: 16px;
+    line-height: 1.6;
     color: var(--ink-2);
     background: var(--page-wash);
     min-height: 100vh;
@@ -480,9 +550,9 @@ const LANDING_HTML = `<!doctype html>
   a:focus-visible { outline: none; box-shadow: var(--shadow-focus); border-radius: 6px; }
 
   main {
-    max-width: 720px;
+    max-width: 1080px;
     margin: 0 auto;
-    padding: 56px 24px 80px;
+    padding: 88px 40px 96px;
   }
 
   /* Brand row */
@@ -526,14 +596,14 @@ const LANDING_HTML = `<!doctype html>
   .wm .b { color: var(--primary-500); }
 
   /* Hero */
-  .hero { margin-bottom: 44px; }
+  .hero { margin-bottom: 72px; max-width: 760px; }
   .hero .eyebrow {
     font-family: var(--font-mono);
-    font-size: 11px;
-    letter-spacing: 0.08em;
+    font-size: 12px;
+    letter-spacing: 0.10em;
     text-transform: uppercase;
     color: var(--ink-3);
-    margin-bottom: 14px;
+    margin-bottom: 22px;
     display: inline-flex; align-items: center; gap: 8px;
   }
   .hero .eyebrow .dot {
@@ -542,27 +612,28 @@ const LANDING_HTML = `<!doctype html>
     box-shadow: 0 0 8px rgba(30, 168, 160, 0.6);
   }
   .hero h1 {
-    font-size: 44px;
-    line-height: 1.1;
-    letter-spacing: -0.012em;
+    font-size: 72px;
+    line-height: 1.05;
+    letter-spacing: -0.020em;
     font-weight: 600;
     color: var(--ink-1);
-    margin: 0 0 16px;
+    margin: 0 0 22px;
   }
   .hero h1 .jp {
     font-family: var(--font-jp);
     font-weight: 500;
-    font-size: 0.7em;
+    font-size: 0.55em;
     color: var(--ink-3);
-    margin-left: 12px;
+    margin-left: 18px;
     letter-spacing: 0;
+    white-space: nowrap;
   }
   .hero p {
-    font-size: 16px;
+    font-size: 21px;
     line-height: 1.6;
     color: var(--ink-2);
-    margin: 0 0 28px;
-    max-width: 540px;
+    margin: 0 0 36px;
+    max-width: 620px;
   }
 
   /* Actions */
@@ -570,10 +641,10 @@ const LANDING_HTML = `<!doctype html>
     display: flex; gap: 10px; flex-wrap: wrap;
   }
   .btn {
-    height: 40px; padding: 0 18px;
+    height: 48px; padding: 0 22px;
     border: none; border-radius: var(--radius-md);
-    font-family: var(--font-ui); font-size: 13px; font-weight: 500;
-    display: inline-flex; align-items: center; gap: 7px;
+    font-family: var(--font-ui); font-size: 15px; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 8px;
     cursor: pointer;
     transition: transform var(--dur-fast) var(--ease-out),
                 box-shadow var(--dur-fast) var(--ease-out),
@@ -585,9 +656,7 @@ const LANDING_HTML = `<!doctype html>
     box-shadow: 0 4px 12px rgba(79, 108, 232, 0.30),
                 inset 0 1px 0 rgba(255, 255, 255, 0.18);
   }
-  @media (prefers-color-scheme: dark) {
-    .btn.primary { color: var(--bg-base); box-shadow: 0 4px 14px rgba(122, 149, 250, 0.35); }
-  }
+  [data-theme="yoru"] .btn.primary { color: var(--bg-base); box-shadow: 0 4px 14px rgba(122, 149, 250, 0.35); }
   .btn.primary:hover { transform: translateY(-1px); }
   .btn.primary:active { transform: scale(0.985); box-shadow: var(--shadow-inset); }
 
@@ -605,7 +674,7 @@ const LANDING_HTML = `<!doctype html>
   .btn:hover .arrow { transform: translateX(2px); }
 
   /* Sections */
-  section { margin-top: 24px; }
+  section { margin-top: 36px; }
   .group {
     background: var(--bg-surface);
     border-radius: var(--radius-lg);
@@ -613,12 +682,12 @@ const LANDING_HTML = `<!doctype html>
     overflow: hidden;
   }
   .grp-h {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.10em;
     text-transform: uppercase;
     color: var(--ink-3);
-    padding: 14px 18px 8px;
+    padding: 18px 22px 10px;
     display: flex; align-items: center; gap: 8px;
   }
   .grp-h .jp {
@@ -647,14 +716,14 @@ const LANDING_HTML = `<!doctype html>
   }
   .row .body { flex: 1; min-width: 0; }
   .row .body .t {
-    font-size: 13px; font-weight: 500;
+    font-size: 14.5px; font-weight: 500;
     color: var(--ink-1);
-    margin-bottom: 2px;
+    margin-bottom: 3px;
   }
   .row .body .s {
-    font-size: 12px;
+    font-size: 13.5px;
     color: var(--ink-3);
-    line-height: 1.5;
+    line-height: 1.55;
   }
   .row .body .s a {
     color: var(--primary-500);
@@ -665,7 +734,7 @@ const LANDING_HTML = `<!doctype html>
 
   code, .mono {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: 13px;
     background: var(--bg-sunken);
     color: var(--ink-2);
     padding: 2px 7px;
@@ -673,36 +742,43 @@ const LANDING_HTML = `<!doctype html>
     box-shadow: var(--shadow-inset);
   }
 
-  /* Endpoint list */
-  .endpoints { padding: 4px 18px 14px; }
-  .ep {
-    display: flex; align-items: baseline; gap: 12px;
-    padding: 10px 0;
-    font-family: var(--font-mono);
-    font-size: 12px;
+  /* Endpoint grid — 4-up on desktop, stacks on narrow viewports */
+  .endpoints {
+    padding: 8px 22px 22px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
   }
-  .ep + .ep { border-top: 1px solid var(--line-1); }
+  .ep {
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 14px 14px 14px 14px;
+    background: var(--bg-elevated);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-inset);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    min-height: 86px;
+  }
   .ep .verb {
     font-size: 10px; font-weight: 600;
     color: var(--frost-500);
-    letter-spacing: 0.08em;
+    letter-spacing: 0.10em;
     text-transform: uppercase;
-    width: 32px; flex-shrink: 0;
   }
-  .ep .path { color: var(--ink-1); font-weight: 500; }
-  .ep .note { color: var(--ink-3); margin-left: auto; font-family: var(--font-ui); font-size: 11px; }
+  .ep .path { color: var(--ink-1); font-weight: 500; font-size: 14px; overflow-wrap: anywhere; }
+  .ep .note { color: var(--ink-3); font-family: var(--font-ui); font-size: 12px; margin-top: auto; }
 
   /* Status pill */
   .status-pill {
-    margin-top: 20px;
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 7px 14px;
+    margin-top: 28px;
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 9px 16px;
     background: var(--glass-bg);
     backdrop-filter: blur(18px) saturate(140%);
     -webkit-backdrop-filter: blur(18px) saturate(140%);
     border: 1px solid var(--glass-border);
     border-radius: var(--radius-pill);
-    font-size: 11px;
+    font-size: 13px;
     color: var(--ink-2);
   }
   .status-pill .dot {
@@ -723,7 +799,7 @@ const LANDING_HTML = `<!doctype html>
     padding-top: 24px;
     border-top: 1px solid var(--line-1);
     display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
-    font-size: 11px;
+    font-size: 12.5px;
     color: var(--ink-3);
   }
   footer .sep { color: var(--ink-4); }
@@ -734,27 +810,191 @@ const LANDING_HTML = `<!doctype html>
     letter-spacing: 0;
   }
 
+  /* Floating theme toggle — fixed top-right, neumorphic pill */
+  .theme-toggle {
+    position: fixed;
+    top: 24px;
+    right: 24px;
+    width: 42px;
+    height: 42px;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--bg-surface);
+    color: var(--ink-1);
+    box-shadow: var(--shadow-raised);
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: box-shadow var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+    z-index: 100;
+  }
+  .theme-toggle:hover { box-shadow: var(--shadow-lifted); transform: translateY(-1px); }
+  .theme-toggle:active { transform: scale(0.94); box-shadow: var(--shadow-inset); }
+  .theme-toggle:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+  .theme-toggle svg { width: 18px; height: 18px; }
+  .theme-toggle .icon-sun { display: none; }
+  .theme-toggle .icon-moon { display: block; }
+  [data-theme="yoru"] .theme-toggle .icon-sun { display: block; }
+  [data-theme="yoru"] .theme-toggle .icon-moon { display: none; }
+
+  /* GitHub README content rendered through the worker, wrapped in our
+     design system. Live mirror — changes on README.md flow through in
+     ~10 min via worker edge cache. */
+  .readme { margin-top: 40px; }
+  .readme-content {
+    background: var(--bg-surface);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-raised);
+    padding: 44px 56px 52px;
+    color: var(--ink-2);
+    font-size: 16px;
+    line-height: 1.75;
+    overflow-wrap: anywhere;
+  }
+  .readme-content > *:first-child { margin-top: 0; }
+  .readme-content > *:last-child { margin-bottom: 0; }
+  .readme-content h1,
+  .readme-content h2,
+  .readme-content h3 {
+    color: var(--ink-1);
+    font-weight: 600;
+    line-height: 1.3;
+    margin: 36px 0 14px;
+    letter-spacing: -0.008em;
+  }
+  .readme-content h1 { font-size: 32px; margin-top: 0; padding-bottom: 14px; border-bottom: 1px solid var(--line-1); }
+  .readme-content h2 { font-size: 24px; padding-top: 12px; margin-top: 44px; }
+  .readme-content h3 { font-size: 19px; margin-top: 28px; }
+  .readme-content p { margin: 0 0 12px; }
+  .readme-content a {
+    color: var(--primary-500);
+    border-bottom: 1px solid var(--primary-300);
+    padding-bottom: 1px;
+    transition: color var(--dur-fast) var(--ease-out);
+  }
+  .readme-content a:hover { color: var(--primary-600); }
+  .readme-content ul,
+  .readme-content ol { margin: 0 0 14px; padding-left: 22px; }
+  .readme-content li { margin-bottom: 4px; }
+  .readme-content code {
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+    background: var(--bg-sunken);
+    color: var(--ink-1);
+    padding: 2px 6px;
+    border-radius: 5px;
+    box-shadow: var(--shadow-inset);
+  }
+  .readme-content pre {
+    background: var(--bg-sunken);
+    border-radius: var(--radius-md);
+    padding: 14px 16px;
+    overflow-x: auto;
+    box-shadow: var(--shadow-inset);
+    margin: 0 0 14px;
+  }
+  .readme-content pre code {
+    background: transparent;
+    padding: 0;
+    box-shadow: none;
+    font-size: 13.5px;
+    color: var(--ink-1);
+  }
+  .readme-content blockquote {
+    margin: 0 0 14px;
+    padding: 8px 14px;
+    border-left: 3px solid var(--primary-300);
+    background: var(--bg-tint);
+    color: var(--ink-3);
+    border-radius: 0 8px 8px 0;
+  }
+  .readme-content blockquote p:last-child { margin-bottom: 0; }
+  .readme-content img {
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-pop);
+    margin: 8px 0;
+  }
+  .readme-content p[align="center"] { text-align: center; }
+  .readme-content hr {
+    border: 0;
+    border-top: 1px solid var(--line-1);
+    margin: 24px 0;
+  }
+  .readme-content table {
+    border-collapse: collapse;
+    margin: 0 0 14px;
+    font-size: 14px;
+  }
+  .readme-content th,
+  .readme-content td {
+    padding: 8px 12px;
+    border: 1px solid var(--line-2);
+    text-align: left;
+  }
+  .readme-content th { background: var(--bg-sunken); color: var(--ink-1); }
+  .readme-content .anchor,
+  .readme-content .octicon { display: none; }
+
   /* Responsive — design-system mobile-first sizing */
+  @media (max-width: 900px) {
+    main { padding: 56px 24px 72px; }
+    .hero h1 { font-size: 56px; }
+    .hero h1 .jp { font-size: 0.5em; margin-left: 12px; }
+    .hero p { font-size: 18px; }
+    .readme-content { padding: 32px 28px 36px; font-size: 15.5px; }
+    .readme-content h1 { font-size: 26px; }
+    .readme-content h2 { font-size: 21px; }
+    .readme-content h3 { font-size: 17px; }
+  }
   @media (max-width: 540px) {
     main { padding: 40px 18px 64px; }
-    .brand { margin-bottom: 36px; }
-    .hero h1 { font-size: 32px; }
-    .hero h1 .jp { display: block; margin-left: 0; margin-top: 6px; font-size: 14px; }
-    .hero p { font-size: 14px; }
-    .btn { height: 44px; }
+    .hero h1 { font-size: 42px; }
+    .hero h1 .jp { display: block; margin-left: 0; margin-top: 8px; font-size: 18px; }
+    .hero p { font-size: 16px; }
+    .btn { height: 44px; font-size: 14px; }
     .row { padding: 14px 16px; }
+    .theme-toggle { top: 16px; right: 16px; width: 38px; height: 38px; }
+    .readme-content { padding: 22px 18px 26px; font-size: 15px; }
+    .readme-content h1 { font-size: 22px; }
+    .readme-content h2 { font-size: 19px; }
+    .readme-content h3 { font-size: 16px; }
   }
 </style>
+<script>
+  // Resolve theme before paint to avoid FOUC. Reads localStorage first,
+  // falls back to OS preference. JS is invoked from the head before body
+  // parses; if blocked, the default akari in <html data-theme="akari"> wins.
+  (function() {
+    try {
+      var k = "lyriclens-theme";
+      var saved = localStorage.getItem(k);
+      var dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+      document.documentElement.dataset.theme = saved || (dark ? "yoru" : "akari");
+    } catch (_) {}
+  })();
+</script>
 </head>
 <body>
-<main>
-  <a href="https://yoru-and-akari.dev" class="brand" aria-label="yoru and akari home">
-    <div class="mark" aria-hidden="true">
-      <span class="lamp"></span><span class="night"></span>
-    </div>
-    <div class="wm"><span class="a">akari</span><span class="sep">·</span><span class="b">yoru</span></div>
-  </a>
+<button type="button" class="theme-toggle" aria-label="切换深色 / 浅色">
+  <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="4"></circle>
+    <line x1="12" y1="2" x2="12" y2="5"></line>
+    <line x1="12" y1="19" x2="12" y2="22"></line>
+    <line x1="2" y1="12" x2="5" y2="12"></line>
+    <line x1="19" y1="12" x2="22" y2="12"></line>
+    <line x1="4.93" y1="4.93" x2="7.05" y2="7.05"></line>
+    <line x1="16.95" y1="16.95" x2="19.07" y2="19.07"></line>
+    <line x1="4.93" y1="19.07" x2="7.05" y2="16.95"></line>
+    <line x1="16.95" y1="7.05" x2="19.07" y2="4.93"></line>
+  </svg>
+  <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+  </svg>
+</button>
 
+<main>
   <section class="hero">
     <div class="eyebrow"><span class="dot"></span>plugin · betterncm</div>
     <h1>lyriclens<span class="jp">歌詞のレンズ</span></h1>
@@ -783,45 +1023,8 @@ const LANDING_HTML = `<!doctype html>
     </div>
   </section>
 
-  <section>
-    <div class="group">
-      <div class="grp-h">install <span class="jp">· インストール</span></div>
-      <div class="row">
-        <span class="num">1</span>
-        <div class="body">
-          <div class="t">prerequisite</div>
-          <div class="s">先装好 <a href="https://github.com/MicroCBer/BetterNCM" target="_blank" rel="noopener">betterncm</a>，确认它能在网易云里弹出插件管理。</div>
-        </div>
-      </div>
-      <div class="row">
-        <span class="num">2</span>
-        <div class="body">
-          <div class="t">download</div>
-          <div class="s">点上面 <code>下载最新版</code>，得到 <code>LyricLens.plugin</code> 文件。</div>
-        </div>
-      </div>
-      <div class="row">
-        <span class="num">3</span>
-        <div class="body">
-          <div class="t">install</div>
-          <div class="s">把 .plugin 拖进 betterncm 的插件管理窗口。</div>
-        </div>
-      </div>
-      <div class="row">
-        <span class="num">4</span>
-        <div class="body">
-          <div class="t">restart</div>
-          <div class="s">重启网易云音乐，让 betterncm 加载新插件。</div>
-        </div>
-      </div>
-      <div class="row">
-        <span class="num">5</span>
-        <div class="body">
-          <div class="t">listen</div>
-          <div class="s">播放一首英文 / 日文歌，浮层会跟着歌词自动出现。</div>
-        </div>
-      </div>
-    </div>
+  <section class="readme">
+    <article class="readme-content"><!--README_HTML--></article>
   </section>
 
   <section>
@@ -838,11 +1041,21 @@ const LANDING_HTML = `<!doctype html>
 
   <footer>
     <span>maintained by <a href="https://github.com/yoruuuchan" target="_blank" rel="noopener">@yoruuuchan</a></span>
-    <span class="sep">·</span>
-    <a href="https://yoru-and-akari.dev">yoru-and-akari.dev</a>
-    <span class="sep">·</span>
-    <span class="jp">灯と夜</span>
   </footer>
 </main>
+<script>
+  // Click handler — toggles data-theme between akari and yoru,
+  // and persists the choice so future loads skip the OS-pref check.
+  (function() {
+    var btn = document.querySelector(".theme-toggle");
+    if (!btn) return;
+    btn.addEventListener("click", function() {
+      var root = document.documentElement;
+      var next = root.dataset.theme === "akari" ? "yoru" : "akari";
+      root.dataset.theme = next;
+      try { localStorage.setItem("lyriclens-theme", next); } catch (_) {}
+    });
+  })();
+</script>
 </body>
 </html>`;
