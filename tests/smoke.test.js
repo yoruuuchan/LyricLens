@@ -44,7 +44,7 @@ test("manifest.json injects file list matches built plugin contents", () => {
 
 test("plugin zip contains all inject files at root level", () => {
   const root = path.resolve(__dirname, "..");
-  const pluginPath = path.join(root, "LyricLens-0.1.0.plugin");
+  const pluginPath = path.join(root, "LyricLens.plugin");
 
   if (!fs.existsSync(pluginPath)) {
     // Plugin not yet built — skip with a warning

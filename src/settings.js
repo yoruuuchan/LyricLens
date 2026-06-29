@@ -28,7 +28,14 @@
     cardGenerationMode: "per-line",
     responseFormatMode: "auto",
     modelThinkingMode: "off",
-    companionExePath: ""
+    companionExePath: "",
+    // Update channel — autoCheckUpdate runs a single GET /latest.json at
+    // bootstrap to set a badge in the UI when a new version exists.
+    // Never downloads or installs without user click. lastSeenLatest
+    // remembers the most recent version the user dismissed so we don't
+    // re-pop the same notice every restart.
+    autoCheckUpdate: true,
+    lastSeenLatest: ""
   };
 
   const MODEL_PRESETS = [
@@ -126,7 +133,9 @@
       responseFormatMode: ["auto", "json_object", "off"].includes(input.responseFormatMode)
         ? input.responseFormatMode
         : DEFAULT_SETTINGS.responseFormatMode,
-      companionExePath: String(input.companionExePath ?? "").trim()
+      companionExePath: String(input.companionExePath ?? "").trim(),
+      autoCheckUpdate: input.autoCheckUpdate !== false,
+      lastSeenLatest: String(input.lastSeenLatest ?? "")
     };
   }
 

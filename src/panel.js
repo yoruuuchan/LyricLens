@@ -11,6 +11,7 @@
   };
   const MIN_WIDTH = 320;
   const MIN_HEIGHT = 220;
+  const FEEDBACK_URL = "https://lyriclens.yoru-and-akari.dev/feedback";
   const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
   let activePanel = null;
 
@@ -370,6 +371,27 @@
     let poppedOut = false;
     let bridgeStatus = "idle";
     let notifyScheduled = false;
+    let changelogOpen = null;
+    let changelogKey = "";
+    let aboutScrollTop = 0;
+    let aboutLastWheelDeltaY = 0;
+    let aboutScrollRestoreScheduled = false;
+    let feedbackDraft = { email: "", message: "", status: "", statusKind: "" };
+    // Update channel state — set by main.js after Updater.checkForUpdate
+    // runs in the background. UI uses it to badge the gear icon and to
+    // populate the "关于 / 更新" settings tab.
+    let updateState = {
+      status: "idle",        // idle | checking | current | update-available | ahead | error
+      current: "",
+      latest: "",
+      payload: null,         // full /latest.json body when present
+      error: null,
+      lastCheckedAt: 0,
+      installing: false,     // true while download+write in progress
+      installStage: null,    // download-start | download-done | verify-done | write-done
+      installError: null,
+      installedNeedsRestart: false
+    };
 
     function mount() {
       if (panel || !root.document?.body) return;
@@ -421,6 +443,21 @@
       settings = Settings?.normalizeSettings(nextSettings) || nextSettings || settings;
       applySettingsVisuals();
       render();
+    }
+
+    // Push a fresh updater snapshot in from main.js. Re-renders so any
+    // open settings panel reflects new state immediately. Background
+    // detection (mode != settings) only nudges via renderBackground so
+    // we don't yank a card view off-screen.
+    function setUpdateState(patch) {
+      if (!patch || typeof patch !== "object") return;
+      updateState = { ...updateState, ...patch };
+      if (settingsOpen && settingsTab === "about") render();
+      else renderBackground();
+    }
+
+    function getUpdateState() {
+      return { ...updateState };
     }
 
     function hide() {
@@ -586,6 +623,10 @@
 
     function render() {
       if (!panel) return;
+      const restoreSettingsTab = settingsOpen ? settingsTab : null;
+      const restoreSettingsScrollTop = restoreSettingsTab
+        ? panel.querySelector(".ll-settings-body")?.scrollTop ?? null
+        : null;
       panel.innerHTML = "";
       panel.classList.toggle("ll-is-minimized", minimized && !poppedOut);
       panel.classList.toggle("ll-is-popped-out", poppedOut);
@@ -653,6 +694,15 @@
       }
 
       panel.appendChild(content);
+      if (restoreSettingsTab && restoreSettingsTab === settingsTab && restoreSettingsScrollTop > 0) {
+        const body = panel.querySelector(".ll-settings-body");
+        if (body) {
+          body.scrollTop = restoreSettingsScrollTop;
+          requestAnimationFrame(() => {
+            if (body.isConnected && body.scrollTop === 0) body.scrollTop = restoreSettingsScrollTop;
+          });
+        }
+      }
       if (options.isDebugEnabled?.() && mode !== "debug") panel.appendChild(renderDebugEntry());
       if (mode === "card" && !settingsOpen) panel.appendChild(renderFooter());
       ["n", "ne", "e", "se", "s", "sw", "w", "nw"].forEach((direction) => {
@@ -710,10 +760,21 @@
       titlebar.appendChild(brand);
 
       const actions = Card.el("div", "ll-actions");
-      actions.appendChild(iconButton("ll-settings-button", settingsOpen ? "arrow-left" : "settings", settingsOpen ? "返回" : "设置", () => {
+      // Gear button doubles as the "you have an update" affordance.
+      // The ember dot is a `::after` pseudo-element driven by a data
+      // attribute on the button, so it can sit on top of the icon
+      // without joining the grid layout (an actual child would push
+      // the icon off-center because `.ll-icon-button` is display:grid).
+      const showUpdateBadge = (updateState.status === "update-available" &&
+                               (updateState.latest && updateState.latest !== settings.lastSeenLatest))
+                              || updateState.installedNeedsRestart;
+      const settingsBtn = iconButton("ll-settings-button", settingsOpen ? "arrow-left" : "settings", settingsOpen ? "返回" : (showUpdateBadge ? "设置（有新版本）" : "设置"), () => {
         settingsOpen = !settingsOpen;
+        if (settingsOpen && showUpdateBadge) settingsTab = "about";
         render();
-      }));
+      });
+      if (showUpdateBadge && !settingsOpen) settingsBtn.dataset.hasUpdate = "true";
+      actions.appendChild(settingsBtn);
       actions.appendChild(iconButton("ll-popout-button", "external-link", "弹出到桌面", () => {
         options.onPopOutToggle?.(true);
       }));
@@ -827,7 +888,7 @@
       const form = Card.el("form", "ll-settings-form");
       const tabs = Card.el("div", "ll-settings-tabs");
       tabs.setAttribute("role", "tablist");
-      [["general", "常规"], ["ai", "AI 服务"], ["advanced", "高级"]].forEach(([value, label]) => {
+      [["general", "常规"], ["ai", "AI 服务"], ["advanced", "高级"], ["about", "关于"]].forEach(([value, label]) => {
         const button = Card.el("button", value === settingsTab ? "ll-settings-tab ll-is-active" : "ll-settings-tab", label);
         button.type = "button";
         button.setAttribute("role", "tab");
@@ -843,6 +904,7 @@
       const body = Card.el("div", "ll-settings-body");
       if (settingsTab === "ai") renderAiSettings(body);
       else if (settingsTab === "advanced") renderAdvancedSettings(body);
+      else if (settingsTab === "about") renderAboutSettings(body);
       else renderGeneralSettings(body);
       form.appendChild(body);
 
@@ -918,6 +980,365 @@
       const companion = settingsSection("桌面悬浮窗");
       companion.appendChild(companionPathField());
       body.appendChild(companion);
+    }
+
+    function renderAboutSettings(body) {
+      const meta = settingsSection("关于");
+      const metaList = Card.el("div", "ll-about-meta");
+      metaList.appendChild(aboutMetaRow("当前版本", `v${updateState.current || readPluginVersionLocal()}`));
+      metaList.appendChild(aboutMetaRow("更新源", "lyriclens.yoru-and-akari.dev"));
+      metaList.appendChild(aboutMetaRow("GitHub", "yoruuuchan/LyricLens"));
+      meta.appendChild(metaList);
+      body.appendChild(meta);
+
+      const feedback = settingsSection("开发者意见反馈");
+      feedback.appendChild(renderFeedbackCard());
+      body.appendChild(feedback);
+
+      const updates = settingsSection("更新");
+      const card = Card.el("div", "ll-update-card");
+      card.appendChild(renderUpdateStatusBlock());
+      card.appendChild(renderUpdateActions());
+      updates.appendChild(card);
+
+      const cl = renderChangelogBlock();
+      if (cl) updates.appendChild(cl);
+
+      updates.appendChild(settingRow(
+        "启动时自动检查更新",
+        "仅获取版本号，不会下载或安装",
+        switchControl("autoCheckUpdate", settings.autoCheckUpdate)
+      ));
+      body.appendChild(updates);
+      attachAboutScrollGuard(body);
+    }
+
+    function renderFeedbackCard() {
+      const card = Card.el("div", "ll-feedback-card");
+      const copy = Card.el("div", "ll-feedback-copy");
+      copy.appendChild(Card.el("div", "ll-feedback-title", "遇到问题或有建议，可以直接写给开发者"));
+      copy.appendChild(Card.el("div", "ll-feedback-sub", "邮件由 LyricLens 服务端转发，不会在插件里暴露收件地址。"));
+
+      const email = Card.el("input", "ll-input ll-feedback-input");
+      email.type = "email";
+      email.placeholder = "你的邮箱（用于回复）";
+      email.autocomplete = "email";
+      email.required = true;
+      email.value = feedbackDraft.email;
+      email.addEventListener("input", () => {
+        feedbackDraft = { ...feedbackDraft, email: email.value, status: "", statusKind: "" };
+      });
+      copy.appendChild(email);
+
+      const FEEDBACK_MAX = 10000;
+      const message = Card.el("textarea", "ll-input ll-feedback-message");
+      message.placeholder = "反馈内容";
+      message.required = true;
+      message.maxLength = FEEDBACK_MAX;
+      message.rows = 4;
+      message.value = feedbackDraft.message;
+      const counter = Card.el("div", "ll-feedback-counter");
+      const updateCounter = () => {
+        const used = message.value.length;
+        counter.textContent = `${used} / ${FEEDBACK_MAX}`;
+        counter.classList.toggle("ll-is-warn", used >= FEEDBACK_MAX * 0.8);
+      };
+      message.addEventListener("input", () => {
+        feedbackDraft = { ...feedbackDraft, message: message.value, status: "", statusKind: "" };
+        updateCounter();
+      });
+      copy.appendChild(message);
+      updateCounter();
+      copy.appendChild(counter);
+
+      const trap = Card.el("input", "ll-feedback-trap");
+      trap.type = "text";
+      trap.tabIndex = -1;
+      trap.autocomplete = "off";
+      copy.appendChild(trap);
+
+      const statusClass = feedbackDraft.statusKind ? `ll-feedback-status ll-feedback-status-${feedbackDraft.statusKind}` : "ll-feedback-status";
+      const status = Card.el("div", statusClass, feedbackDraft.status);
+      copy.appendChild(status);
+      card.appendChild(copy);
+
+      const action = Card.el("button", "ll-secondary-button", "发送反馈");
+      action.type = "button";
+      action.addEventListener("click", () => submitFeedback({ email, message, trap, status, action }));
+      card.appendChild(action);
+      return card;
+    }
+
+    async function submitFeedback(nodes) {
+      const text = String(nodes.message.value || "").trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(nodes.email.value || "").trim())) {
+        feedbackDraft = { ...feedbackDraft, email: nodes.email.value, message: nodes.message.value, status: "请填写有效邮箱，方便回复。", statusKind: "fail" };
+        nodes.status.className = "ll-feedback-status ll-feedback-status-fail";
+        nodes.status.textContent = feedbackDraft.status;
+        return;
+      }
+      if (text.length < 5) {
+        feedbackDraft = { ...feedbackDraft, email: nodes.email.value, message: nodes.message.value, status: "请至少写 5 个字。", statusKind: "fail" };
+        nodes.status.className = "ll-feedback-status ll-feedback-status-fail";
+        nodes.status.textContent = feedbackDraft.status;
+        return;
+      }
+      feedbackDraft = { ...feedbackDraft, email: nodes.email.value, message: nodes.message.value, status: "", statusKind: "" };
+      nodes.action.disabled = true;
+      nodes.action.textContent = "发送中...";
+      nodes.status.className = "ll-feedback-status";
+      nodes.status.textContent = "";
+      const version = updateState.current || readPluginVersionLocal();
+      try {
+        const resp = await root.fetch(FEEDBACK_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: String(nodes.email.value || "").trim(),
+            message: text,
+            _trap: String(nodes.trap.value || ""),
+            meta: {
+              version,
+              ncmVersion: readRuntimeVersion(root.betterncm?.ncm, "getNCMVersion"),
+              betterNcmVersion: readRuntimeVersion(root.betterncm?.app, "getBetterNCMVersion"),
+              theme: settings.panelTheme,
+              fontSize: settings.panelFontSize
+            }
+          })
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        feedbackDraft = { email: nodes.email.value, message: "", status: "已发送，谢谢。", statusKind: "ok" };
+        nodes.message.value = "";
+        nodes.trap.value = "";
+        nodes.status.className = "ll-feedback-status ll-feedback-status-ok";
+        nodes.status.textContent = feedbackDraft.status;
+      } catch (err) {
+        feedbackDraft = { ...feedbackDraft, email: nodes.email.value, message: nodes.message.value, status: "发送失败，请稍后再试。", statusKind: "fail" };
+        nodes.status.className = "ll-feedback-status ll-feedback-status-fail";
+        nodes.status.textContent = feedbackDraft.status;
+        Utils?.warn?.("feedback submit failed", err);
+      } finally {
+        nodes.action.disabled = false;
+        nodes.action.textContent = "发送反馈";
+      }
+    }
+
+    function readRuntimeVersion(owner, methodName) {
+      try {
+        const reader = owner?.[methodName];
+        if (typeof reader !== "function") return "unknown";
+        const value = reader.call(owner);
+        return value == null ? "unknown" : String(value);
+      } catch (_) {
+        return "unknown";
+      }
+    }
+
+    function attachAboutScrollGuard(body) {
+      aboutScrollTop = body.scrollTop || 0;
+      body.addEventListener("wheel", (event) => {
+        aboutLastWheelDeltaY = event.deltaY || 0;
+      }, { passive: true, capture: true });
+      body.addEventListener("mousedown", () => {
+        aboutLastWheelDeltaY = 0;
+      });
+      body.addEventListener("scroll", () => {
+        const current = body.scrollTop;
+        const previous = aboutScrollTop;
+        const jumpedToTopWhileScrollingDown = current === 0 && previous > 8 && aboutLastWheelDeltaY > 0;
+        if (jumpedToTopWhileScrollingDown && !aboutScrollRestoreScheduled) {
+          aboutScrollRestoreScheduled = true;
+          requestAnimationFrame(() => {
+            aboutScrollRestoreScheduled = false;
+            if (body.isConnected && body.scrollTop === 0) body.scrollTop = previous;
+            aboutScrollTop = body.scrollTop;
+          });
+          return;
+        }
+        aboutScrollTop = current;
+      }, { passive: true });
+    }
+
+    function aboutMetaRow(label, value) {
+      const row = Card.el("div", "ll-about-meta-row");
+      row.appendChild(Card.el("span", "ll-about-meta-label", label));
+      row.appendChild(Card.el("span", "ll-about-meta-value", value));
+      return row;
+    }
+
+    function readPluginVersionLocal() {
+      try {
+        return root.LyricLens?.Updater?.readPluginVersion?.() || "0.0.0";
+      } catch (_) { return "0.0.0"; }
+    }
+
+    function renderUpdateStatusBlock() {
+      const block = Card.el("div", "ll-update-status");
+      const cls = updateStatusClass(updateState.status);
+      const dot = Card.el("span", `ll-update-dot ${cls}`);
+      block.appendChild(dot);
+      const text = Card.el("div", "ll-update-status-text");
+      const title = Card.el("div", "ll-update-status-title", updateStatusTitle());
+      text.appendChild(title);
+      const sub = updateStatusSubtitle();
+      if (sub) text.appendChild(Card.el("div", "ll-update-status-sub", sub));
+      block.appendChild(text);
+      return block;
+    }
+
+    function updateStatusClass(s) {
+      if (s === "update-available") return "ll-update-dot-pending";
+      if (s === "error") return "ll-update-dot-error";
+      if (s === "checking") return "ll-update-dot-checking";
+      if (s === "current" || s === "ahead") return "ll-update-dot-ok";
+      return "";
+    }
+
+    function updateStatusTitle() {
+      if (updateState.installedNeedsRestart) return "已安装，重启网易云生效";
+      if (updateState.installing) return installStageLabel(updateState.installStage) || "正在更新...";
+      if (updateState.installError) return "安装失败";
+      switch (updateState.status) {
+        case "checking": return "正在检查更新...";
+        case "update-available": return `发现新版本 v${updateState.latest}`;
+        case "current": return "已是最新版本";
+        case "ahead": return `你的版本 v${updateState.current} 比线上更新`;
+        case "error": return "无法检查更新";
+        default: return "尚未检查更新";
+      }
+    }
+
+    function updateStatusSubtitle() {
+      if (updateState.installError) return String(updateState.installError);
+      if (updateState.installing) return null;
+      if (updateState.installedNeedsRestart) return "点击下方按钮立即重启 NCM，或稍后手动重启";
+      switch (updateState.status) {
+        case "update-available":
+          return `当前 v${updateState.current} → 最新 v${updateState.latest}`;
+        case "current":
+          return `v${updateState.current} · 已是最新`;
+        case "ahead":
+          return `线上是 v${updateState.latest}（你可能在内测分支上）`;
+        case "error":
+          return String(updateState.error || "网络问题或更新服务暂不可用");
+        case "idle":
+          return "点击下方按钮立即检查";
+        default: return null;
+      }
+    }
+
+    function installStageLabel(stage) {
+      if (!stage) return "正在更新...";
+      const map = {
+        "download-start": "正在下载...",
+        "download-done": "下载完成，校验中...",
+        "verify-done": "校验通过，写入中...",
+        "write-done": "写入完成"
+      };
+      return map[stage] || "正在更新...";
+    }
+
+    function renderUpdateActions() {
+      const row = Card.el("div", "ll-update-actions");
+      const hasUpdate = updateState.status === "update-available";
+
+      if (updateState.installedNeedsRestart) {
+        const restart = Card.el("button", "ll-primary-button", "立即重启网易云");
+        restart.type = "button";
+        restart.addEventListener("click", () => {
+          options.onRequestRestart?.();
+        });
+        row.appendChild(restart);
+        const later = Card.el("button", "ll-secondary-button", "稍后手动重启");
+        later.type = "button";
+        later.addEventListener("click", () => {
+          setUpdateState({ installedNeedsRestart: false });
+        });
+        row.appendChild(later);
+        return row;
+      }
+
+      if (updateState.installing) {
+        const busy = Card.el("button", "ll-primary-button", installStageLabel(updateState.installStage));
+        busy.type = "button";
+        busy.disabled = true;
+        row.appendChild(busy);
+        return row;
+      }
+
+      if (hasUpdate) {
+        const installBtn = Card.el("button", "ll-primary-button", `更新到 v${updateState.latest}`);
+        installBtn.type = "button";
+        installBtn.addEventListener("click", () => {
+          options.onInstallUpdate?.(updateState.payload);
+        });
+        row.appendChild(installBtn);
+      }
+
+      const checkBtn = Card.el("button", "ll-secondary-button",
+        updateState.status === "checking" ? "检查中..." : "重新检查");
+      checkBtn.type = "button";
+      checkBtn.disabled = updateState.status === "checking";
+      checkBtn.addEventListener("click", () => {
+        options.onCheckUpdate?.();
+      });
+      row.appendChild(checkBtn);
+
+      if (hasUpdate) {
+        const skip = Card.el("button", "ll-ghost-button", "跳过此版本");
+        skip.type = "button";
+        skip.addEventListener("click", async () => {
+          settings = await options.onSettingsSave?.({ lastSeenLatest: updateState.latest }) || settings;
+          render();
+        });
+        row.appendChild(skip);
+      }
+
+      return row;
+    }
+
+    function renderChangelogBlock() {
+      const changelog = updateState.payload?.changelog;
+      if (!changelog) return null;
+      const nextKey = `${updateState.payload?.tag || ""}:${updateState.latest || ""}`;
+      if (nextKey !== changelogKey) {
+        changelogKey = nextKey;
+        changelogOpen = updateState.status === "update-available";
+      }
+      const isOpen = changelogOpen ?? (updateState.status === "update-available");
+      const wrap = Card.el("div", isOpen ? "ll-changelog ll-is-open" : "ll-changelog");
+      const summary = Card.el("button", "ll-changelog-summary",
+        updateState.payload?.tag ? `更新日志 · ${updateState.payload.tag}` : "更新日志");
+      summary.type = "button";
+      summary.setAttribute("aria-expanded", String(isOpen));
+      wrap.appendChild(summary);
+      const body = Card.el("div", "ll-changelog-body");
+      body.hidden = !isOpen;
+      const md = String(changelog).slice(0, 8000);
+      const renderer = root.LyricLens?.Updater?.renderMarkdown;
+      if (typeof renderer === "function") {
+        // renderMarkdown HTML-escapes every user-controlled token before
+        // wrapping it in tags, so innerHTML is safe here.
+        body.innerHTML = renderer(md);
+      } else {
+        body.textContent = md;
+      }
+      wrap.appendChild(body);
+      summary.addEventListener("click", () => {
+        const scroller = wrap.closest(".ll-settings-body");
+        const beforeScrollTop = scroller ? scroller.scrollTop : 0;
+        changelogOpen = !changelogOpen;
+        wrap.classList.toggle("ll-is-open", changelogOpen);
+        summary.setAttribute("aria-expanded", String(changelogOpen));
+        body.hidden = !changelogOpen;
+        summary.blur?.();
+        if (scroller && beforeScrollTop > 0) {
+          requestAnimationFrame(() => {
+            if (scroller.scrollTop === 0) scroller.scrollTop = beforeScrollTop;
+          });
+        }
+      });
+      return wrap;
     }
 
     function companionPathField() {
@@ -1473,6 +1894,8 @@
       getAutoFollow: () => stateController.getState().autoFollow,
       setPoppedOut,
       setBridgeStatus,
+      setUpdateState,
+      getUpdateState,
       getPanelSnapshot,
       isPoppedOut: () => poppedOut,
       // Visual on/off — used by the master-enable toggle in the native

@@ -1,0 +1,61 @@
+{
+  "phase": 2,
+  "capturedAt": "2026-06-29T13:45:08.946Z",
+  "env": {
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/91.0.4472.164 NeteaseMusicDesktop/3.1.23.204764",
+    "location": "orpheus://orpheus/pub/app.html",
+    "origin": "orpheus://orpheus",
+    "hasIndexedDB": true,
+    "hasStorage": false,
+    "hasStorageEstimate": false,
+    "hasStoragePersist": false
+  },
+  "marker": {
+    "writtenAt": "2026-06-29T13:42:57.420Z",
+    "writtenAtMs": 1782740577420,
+    "ladderTopBytes": 104857600,
+    "probeVersion": "0.1.0",
+    "sentinel": "lyriclens-probe-b-phase1-marker"
+  },
+  "markerAgeSeconds": 132,
+  "ladder": [
+    {
+      "sizeBytes": 1048576,
+      "label": "1MB",
+      "readMs": 748,
+      "present": true,
+      "sizeMatches": true,
+      "firstByte": 171
+    },
+    {
+      "sizeBytes": 10485760,
+      "label": "10MB",
+      "readMs": 1046,
+      "present": true,
+      "sizeMatches": true,
+      "firstByte": 171
+    },
+    {
+      "sizeBytes": 52428800,
+      "label": "50MB",
+      "readMs": 298,
+      "present": true,
+      "sizeMatches": true,
+      "firstByte": 171
+    },
+    {
+      "sizeBytes": 104857600,
+      "label": "100MB",
+      "readMs": 1189,
+      "present": true,
+      "sizeMatches": true,
+      "firstByte": 171
+    }
+  ],
+  "counts": {
+    "data": 4,
+    "meta": 1
+  },
+  "verdict": "PERSISTENCE_OK_ALL_LADDER_BYTES_SURVIVED",
+  "dbDeleted": true
+}

@@ -1,0 +1,10 @@
+name = "lyriclens-api"
+main = "worker.js"
+compatibility_date = "2026-06-01"
+workers_dev = false
+
+# Route the Worker to the lyriclens subdomain. The DNS record
+# (AAAA 100:: proxied=true) is created via the API in parallel.
+routes = [
+  { pattern = "lyriclens.yoru-and-akari.dev/*", zone_id = "4f9b5c7236e63090439676eec70031e2" }
+]

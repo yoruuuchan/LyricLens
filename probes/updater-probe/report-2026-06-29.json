@@ -1,0 +1,238 @@
+{
+  "probe": "A",
+  "probeVersion": "0.1.0",
+  "capturedAt": "2026-06-29T13:35:57.142Z",
+  "env": {
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/91.0.4472.164 NeteaseMusicDesktop/3.1.23.204764",
+    "betterncmNativeVersion": "<<fn app.version>>",
+    "betterncmExists": "object",
+    "betterncmNativeExists": "object",
+    "pluginGlobalExists": "object",
+    "hasIndexedDB": true,
+    "hasStorageApi": false,
+    "location": "orpheus://orpheus/pub/app.html"
+  },
+  "api": {
+    "betterncm": {
+      "present": true,
+      "keys": [
+        "fs:object",
+        "app:object",
+        "ncm:object",
+        "utils:object",
+        "tests:object",
+        "reload:function",
+        "betterncmFetch:function"
+      ]
+    },
+    "betterncm.app": {
+      "present": true,
+      "keys": [
+        "exec:function",
+        "getBetterNCMVersion:function",
+        "takeBackgroundScreenshot:function",
+        "getNCMWinPos:function",
+        "reloadPlugins:function",
+        "getDataPath:function",
+        "readConfig:function",
+        "writeConfig:function",
+        "getNCMPath:function",
+        "showConsole:function",
+        "setRoundedCorner:function",
+        "openFileDialog:function",
+        "isLightTheme:function",
+        "getSucceededHijacks:function"
+      ]
+    },
+    "betterncm.fs": {
+      "present": true,
+      "keys": [
+        "readDir:function",
+        "readFileText:function",
+        "readFile:function",
+        "mountDir:function",
+        "mountFile:function",
+        "unzip:function",
+        "writeFileText:function",
+        "writeFile:function",
+        "mkdir:function",
+        "exists:function",
+        "remove:function"
+      ]
+    },
+    "betterncm.ncm": {
+      "present": true,
+      "keys": [
+        "findNativeFunction:function",
+        "openUrl:function",
+        "getNCMPackageVersion:function",
+        "getNCMFullVersion:function",
+        "getNCMVersion:function",
+        "getNCMBuild:function",
+        "searchApiFunction:function",
+        "searchForData:function",
+        "findApiFunction:function",
+        "getPlayingSong:function",
+        "getPlaying:function"
+      ]
+    },
+    "betterncm_native": {
+      "present": true,
+      "keys": [
+        "test:object",
+        "fs:object",
+        "app:object",
+        "native_plugin:object"
+      ]
+    },
+    "betterncm_native.app": {
+      "present": true,
+      "keys": [
+        "auto_update:function",
+        "reloadIgnoreCache:function",
+        "datapath:function",
+        "ncmpath:function",
+        "version:function",
+        "restart:function",
+        "crash:function"
+      ]
+    },
+    "betterncm_native.fs": {
+      "present": true,
+      "keys": [
+        "readDir:function",
+        "readDirWithDetails:function",
+        "getDisks:function",
+        "getLibraries:function",
+        "readFileText:function",
+        "readFileTextAsync:function",
+        "watchDirectory:function",
+        "unzip:function",
+        "rename:function",
+        "exists:function",
+        "getProperties:function",
+        "writeFileText:function",
+        "remove:function"
+      ]
+    },
+    "plugin": {
+      "present": true,
+      "keys": [
+        "pluginPath:string",
+        "manifest:object",
+        "configViewElement:object",
+        "mainPlugin:object",
+        "loadError:object",
+        "finished:boolean",
+        "filePath:string"
+      ]
+    }
+  },
+  "fs": {
+    "available": true,
+    "writeFileText": {
+      "ok": true,
+      "value": true
+    },
+    "writeFileBlob100kb": {
+      "ok": true,
+      "bytes": 102400,
+      "elapsedMs": 41
+    },
+    "writeFileBlob1mb": {
+      "ok": true,
+      "bytes": 1048576,
+      "elapsedMs": 118
+    },
+    "writeFileBlob10mb": {
+      "ok": true,
+      "bytes": 10485760,
+      "elapsedMs": 126
+    },
+    "rename": {
+      "skipped": "fs.rename not present"
+    },
+    "overwriteSameFile": {
+      "ok": true,
+      "sizeAfter": 51200
+    },
+    "readDirContainsPlugins": {
+      "ok": true,
+      "totalEntries": 44,
+      "containsLyricLens": true,
+      "containsProbeFiles": [
+        "C:\\betterncm/./plugins/lyriclens-probe-a-big.bin",
+        "C:\\betterncm/./plugins/lyriclens-probe-a-blob.bin",
+        "C:\\betterncm/./plugins/lyriclens-probe-a-work.txt"
+      ],
+      "sample": [
+        "C:\\betterncm/./plugins/Apple-Musiclike-lyrics-3.1.0.plugin",
+        "C:\\betterncm/./plugins/InfLinkrs-3.2.11.plugin",
+        "C:\\betterncm/./plugins/LyricLens-0.1.0.plugin",
+        "C:\\betterncm/./plugins/LyricLens-0.1.0.plugin.bak",
+        "C:\\betterncm/./plugins/LyricLens-0.1.0.plugin.bak-1782166269",
+        "C:\\betterncm/./plugins/LyricLens-0.1.0.plugin.bak-1782168052",
+        "C:\\betterncm/./plugins/LyricLens-0.1.0.plugin.bak-1782169452",
+        "C:\\betterncm/./plugins/LyricLens-0.1.0.plugin.bak-1782170015",
+        "C:\\betterncm/./plugins/LyricLens-0.1.0.plugin.bak-1782170615",
+        "C:\\betterncm/./plugins/LyricLens-0.1.0.plugin.bak-1782170999",
+        "C:\\betterncm/./plugins/LyricLens-0.1.0.plugin.bak-1782171279",
+        "C:\\betterncm/./plugins/LyricLens-0.1.0.plugin.bak-1782171512",
+        "C:\\betterncm/./plugins/LyricLens-0.1.0.plugin.bak-1782172048",
+        "C:\\betterncm/./plugins/LyricLens-0.1.0.plugin.bak-1782174654",
+        "C:\\betterncm/./plugins/LyricLens-0.1.0.plugin.bak-1782176502",
+        "C:\\betterncm/./plugins/LyricLens-0.1.0.plugin.bak-1782181504",
+        "C:\\betterncm/./plugins/LyricLens-0.1.0.plugin.bak-1782182750",
+        "C:\\betterncm/./plugins/LyricLens-0.1.0.plugin.bak-1782183806",
+        "C:\\betterncm/./plugins/LyricLens-0.1.0.plugin.bak-1782184503",
+        "C:\\betterncm/./plugins/LyricLens-0.1.0.plugin.bak-1782185362"
+      ]
+    },
+    "readFileTextRoundtrip": {
+      "ok": true,
+      "sample": "probe-a wrote at 2026-06-29T13:35:57.567Z"
+    },
+    "exists": {
+      "existing": true,
+      "missing": false
+    },
+    "remove": {
+      "cleanedUp": [
+        "lyriclens-probe-a-work2.txt",
+        "lyriclens-probe-a-blob.bin",
+        "lyriclens-probe-a-big.bin"
+      ]
+    },
+    "methodSignatures": {
+      "fs.writeFile": "function",
+      "fs.writeFileText": "function",
+      "fs.readFileText": "function",
+      "fs.readFile": "function",
+      "fs.readDir": "function",
+      "fs.rename": "undefined",
+      "fs.remove": "function",
+      "fs.exists": "function",
+      "fs.mkdir": "function",
+      "fs.unzip": "function",
+      "fs.watchDirectory": "undefined",
+      "native.fs.writeFile": "undefined",
+      "native.fs.readFile": "undefined"
+    }
+  },
+  "reload": {
+    "hasReloadPlugins": true,
+    "hasReload": true,
+    "hasNativeReload": false,
+    "readyForManualTest": true
+  },
+  "restart": {
+    "hasNativeRestart": true,
+    "hasAppExec": true,
+    "readyForManualTest": true
+  },
+  "process": {
+    "inferredProcessFromExec": null
+  },
+  "notes": [],
+  "errors": []
+}

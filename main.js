@@ -156,7 +156,10 @@
       onManualNavigation: handleManualNavigation,
       onAutoFollowChanged: handleAutoFollowChanged,
       onPopOutToggle: handlePopOutToggle,
-      onStateChange: handlePanelStateChange
+      onStateChange: handlePanelStateChange,
+      onCheckUpdate: () => triggerUpdateCheck({ silent: false }),
+      onInstallUpdate: (payload) => triggerUpdateInstall(payload),
+      onRequestRestart: () => triggerRestart()
     });
     if (diagnostics.enabled()) panel.mountDebugPanel();
 
@@ -272,6 +275,11 @@
     // overlay was just created visible; sync it to the persisted state.
     // currentSongId is still null here, so the retry branch is a no-op.
     applyEnabledState();
+
+    // Silent background update probe — gated by settings.autoCheckUpdate
+    // (default on). Sets a badge on the gear icon if a newer version
+    // exists than what the user has seen.
+    scheduleStartupUpdateCheck();
   }
 
   const handleRuntimeLyricsCapturedDebounced = Utils.debounce((detail) => {
@@ -863,6 +871,108 @@
     }
   }
 
+  // ----- Update channel (Stage 1 #2) -------------------------------
+  //
+  // Backed by src/updater.js + the Cloudflare Worker at
+  // lyriclens.yoru-and-akari.dev. Bootstrap fires one silent check
+  // when settings.autoCheckUpdate is on; the result drives a badge
+  // on the gear icon. User explicitly clicks "更新到 vX.X.X" in the
+  // About tab to install — we never auto-install. Restart is also
+  // user-driven via a button.
+
+  async function triggerUpdateCheck(options = {}) {
+    const Updater = LL.Updater;
+    if (!Updater) return;
+    const silent = options.silent === true;
+    panel?.setUpdateState?.({ status: "checking", error: null });
+    const current = Updater.readPluginVersion();
+    try {
+      const result = await Updater.checkForUpdate(current);
+      const patch = {
+        status: result.state,
+        current,
+        latest: result.latest || "",
+        payload: result.payload || null,
+        error: result.error || null,
+        lastCheckedAt: Date.now()
+      };
+      panel?.setUpdateState?.(patch);
+      diagnostics?.updateState?.({
+        updateCheckStatus: result.state,
+        updateCheckLatest: result.latest || null,
+        updateCheckError: result.error || null,
+        updateCheckAt: patch.lastCheckedAt,
+        updateCheckTrigger: silent ? "auto" : "manual"
+      });
+    } catch (err) {
+      panel?.setUpdateState?.({
+        status: "error",
+        error: err?.message || String(err),
+        lastCheckedAt: Date.now()
+      });
+      Utils?.warn?.("checkForUpdate 抛出异常", err);
+    }
+  }
+
+  async function triggerUpdateInstall(payload) {
+    const Updater = LL.Updater;
+    if (!Updater) return;
+    panel?.setUpdateState?.({
+      installing: true,
+      installStage: null,
+      installError: null,
+      installedNeedsRestart: false
+    });
+    const result = await Updater.downloadAndInstall(payload, {
+      onProgress: (stage) => {
+        panel?.setUpdateState?.({ installStage: stage });
+      }
+    });
+    if (result.ok) {
+      panel?.setUpdateState?.({
+        installing: false,
+        installStage: "write-done",
+        installedNeedsRestart: true
+      });
+      diagnostics?.updateState?.({
+        updateInstallResult: "ok",
+        updateInstallBytes: result.sizeBytes,
+        updateInstallAt: Date.now()
+      });
+    } else {
+      panel?.setUpdateState?.({
+        installing: false,
+        installError: result.error || "未知错误"
+      });
+      diagnostics?.updateState?.({
+        updateInstallResult: "error",
+        updateInstallError: result.error,
+        updateInstallAt: Date.now()
+      });
+      Utils?.warn?.("downloadAndInstall 失败", result.error);
+    }
+  }
+
+  function triggerRestart() {
+    const Updater = LL.Updater;
+    if (!Updater) return;
+    const result = Updater.requestRestart();
+    if (!result.ok) {
+      panel?.setUpdateState?.({
+        installError: `重启失败：${result.error}（请手动重启 NCM）`
+      });
+    }
+  }
+
+  function scheduleStartupUpdateCheck() {
+    if (settings.autoCheckUpdate === false) return;
+    // Defer 6s after bootstrap so we don't compete with NCM's own
+    // startup network traffic or song-change analyze pipeline.
+    setTimeout(() => {
+      triggerUpdateCheck({ silent: true }).catch(() => {});
+    }, 6000);
+  }
+
   // Builds the DOM for BetterNCM's native plugin-config page. Kept
   // intentionally minimal: a master enable/disable toggle plus a
   // pointer to the overlay's gear icon for the rest of the settings —
@@ -918,6 +1028,71 @@
     });
     toggleRow.appendChild(checkbox);
     container.appendChild(toggleRow);
+
+    // Update card — mirrors the overlay's About tab so the native
+    // BetterNCM config page is usable for "is there a new version?"
+    // without having to launch a song first.
+    const updateCard = doc.createElement("div");
+    updateCard.style.cssText = "padding:14px;border:1px solid rgba(127,127,127,0.3);border-radius:8px;margin-bottom:16px;";
+    const updateHead = doc.createElement("div");
+    updateHead.style.cssText = "font-size:13px;font-weight:600;margin-bottom:8px;";
+    updateHead.textContent = "更新";
+    updateCard.appendChild(updateHead);
+
+    const updateStatusEl = doc.createElement("div");
+    updateStatusEl.style.cssText = "font-size:12px;opacity:0.75;margin-bottom:10px;line-height:1.5;";
+    const currentVersion = LL.Updater?.readPluginVersion?.() || meta.version || "0.0.0";
+    updateStatusEl.textContent = `当前 v${currentVersion}，点击下方按钮检查最新版`;
+    updateCard.appendChild(updateStatusEl);
+
+    const updateActions = doc.createElement("div");
+    updateActions.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;";
+    const checkButton = doc.createElement("button");
+    checkButton.type = "button";
+    checkButton.textContent = "检查更新";
+    checkButton.style.cssText = "padding:6px 14px;border-radius:6px;border:1px solid rgba(127,127,127,0.4);background:transparent;color:inherit;cursor:pointer;font-size:13px;";
+    checkButton.addEventListener("click", async () => {
+      checkButton.disabled = true;
+      updateStatusEl.textContent = "正在检查...";
+      try {
+        const result = await LL.Updater?.checkForUpdate?.(currentVersion);
+        if (!result) {
+          updateStatusEl.textContent = "Updater 未加载";
+          return;
+        }
+        if (result.state === "update-available") {
+          updateStatusEl.innerHTML = "";
+          const t1 = doc.createElement("div");
+          t1.textContent = `发现新版本 v${result.latest}（当前 v${result.current}）`;
+          t1.style.cssText = "color:#f06a20;font-weight:600;margin-bottom:4px;";
+          updateStatusEl.appendChild(t1);
+          const t2 = doc.createElement("div");
+          t2.textContent = "前往悬浮窗右上角齿轮 → 关于 标签查看 changelog 并安装";
+          updateStatusEl.appendChild(t2);
+        } else if (result.state === "current") {
+          updateStatusEl.textContent = `已是最新版本 v${result.latest}`;
+        } else if (result.state === "ahead") {
+          updateStatusEl.textContent = `本地 v${result.current} 比线上 v${result.latest} 更新`;
+        } else {
+          updateStatusEl.textContent = `检查失败：${result.error || "未知错误"}`;
+        }
+      } catch (err) {
+        updateStatusEl.textContent = `检查异常：${err?.message || err}`;
+      } finally {
+        checkButton.disabled = false;
+      }
+    });
+    updateActions.appendChild(checkButton);
+
+    const openSiteButton = doc.createElement("a");
+    openSiteButton.href = "https://lyriclens.yoru-and-akari.dev";
+    openSiteButton.target = "_blank";
+    openSiteButton.rel = "noopener";
+    openSiteButton.textContent = "访问插件主页";
+    openSiteButton.style.cssText = "padding:6px 14px;border-radius:6px;border:1px solid rgba(127,127,127,0.4);background:transparent;color:inherit;cursor:pointer;font-size:13px;text-decoration:none;display:inline-flex;align-items:center;";
+    updateActions.appendChild(openSiteButton);
+    updateCard.appendChild(updateActions);
+    container.appendChild(updateCard);
 
     const pointer = doc.createElement("div");
     pointer.style.cssText = "padding:12px 14px;border:1px solid rgba(127,127,127,0.3);border-radius:8px;font-size:13px;line-height:1.6;opacity:0.85;";
