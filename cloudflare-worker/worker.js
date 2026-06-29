@@ -26,6 +26,14 @@ const CACHE_TTL_SECONDS = 600;
 const USER_AGENT = "LyricLens-Worker/0.1 (+https://lyriclens.yoru-and-akari.dev)";
 const STATUS_BOARD_FEEDBACK_URL = "https://is-ai-down.yoru-and-akari.dev/api/feedback";
 
+// Soft per-IP cap on /feedback so an open CORS endpoint can't be spammed to
+// exhaust Resend / status-board forwarding quotas. The Dashboard-level Rate
+// Limiting rule (5/min per IP) is the first line; this is a daily backstop.
+// Requires KV namespace bound as FEEDBACK_RL — if absent, we degrade open and
+// emit a console.warn so a missing binding shows up in `wrangler tail`.
+const FEEDBACK_RL_DAILY_LIMIT = 20;
+const FEEDBACK_RL_WINDOW_SECONDS = 86400;
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -241,6 +249,16 @@ async function feedbackResponse(request, env) {
   const meta = payload.meta && typeof payload.meta === "object" ? payload.meta : {};
   const ip = (request.headers.get("CF-Connecting-IP") || "").slice(0, 64);
   const userAgent = (request.headers.get("user-agent") || "").slice(0, 500);
+
+  const rl = await checkFeedbackRateLimit(env, ip);
+  if (!rl.ok) {
+    return feedbackJson(
+      { error: "rate_limited", message: `每个 IP 每天最多 ${rl.limit} 条反馈，已达上限` },
+      429,
+      { "retry-after": String(rl.retryAfter) }
+    );
+  }
+
   const html = renderFeedbackEmailHtml({ email, message, meta, ip, userAgent });
 
   if (!env.RESEND_API_KEY || !feedbackTo || !resendFrom) {
@@ -292,7 +310,7 @@ async function forwardFeedbackToStatusBoard({ email, message, meta }) {
   return feedbackJson({ ok: true }, 200);
 }
 
-function feedbackJson(body, status) {
+function feedbackJson(body, status, extraHeaders) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
@@ -301,8 +319,48 @@ function feedbackJson(body, status) {
       "access-control-allow-origin": "*",
       "access-control-allow-methods": "POST, OPTIONS",
       "access-control-allow-headers": "content-type",
+      ...(extraHeaders || {}),
     },
   });
+}
+
+// Per-day UTC bucket. KV is eventually consistent so a small burst can squeak
+// past on the boundary — that's acceptable for a soft cap. Failures (KV
+// unavailable, parse error) degrade open so a misconfigured binding never
+// breaks the form for real users.
+async function checkFeedbackRateLimit(env, ip) {
+  const kv = env?.FEEDBACK_RL;
+  if (!kv) {
+    try { console.warn("[LyricLens] FEEDBACK_RL KV namespace not bound; /feedback is unrate-limited"); } catch (_) {}
+    return { ok: true, skipped: true };
+  }
+  if (!ip) return { ok: true, skipped: true };
+
+  const today = new Date().toISOString().slice(0, 10);
+  const key = `feedback_rl:${ip}:${today}`;
+  let current = 0;
+  try {
+    const raw = await kv.get(key);
+    if (raw) current = Number.parseInt(raw, 10) || 0;
+  } catch (err) {
+    try { console.warn("[LyricLens] feedback rate-limit read failed:", err?.message || err); } catch (_) {}
+    return { ok: true, skipped: true };
+  }
+
+  if (current >= FEEDBACK_RL_DAILY_LIMIT) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const tomorrowUtc = new Date();
+    tomorrowUtc.setUTCHours(24, 0, 0, 0);
+    const retryAfter = Math.max(60, Math.floor(tomorrowUtc.getTime() / 1000) - nowSec);
+    return { ok: false, limit: FEEDBACK_RL_DAILY_LIMIT, count: current, retryAfter };
+  }
+
+  try {
+    await kv.put(key, String(current + 1), { expirationTtl: FEEDBACK_RL_WINDOW_SECONDS });
+  } catch (err) {
+    try { console.warn("[LyricLens] feedback rate-limit write failed:", err?.message || err); } catch (_) {}
+  }
+  return { ok: true, limit: FEEDBACK_RL_DAILY_LIMIT, count: current + 1 };
 }
 
 function feedbackOptionsResponse() {

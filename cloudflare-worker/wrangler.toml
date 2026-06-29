@@ -8,3 +8,10 @@ workers_dev = false
 routes = [
   { pattern = "lyriclens.yoru-and-akari.dev/*", zone_id = "4f9b5c7236e63090439676eec70031e2" }
 ]
+
+# Per-IP daily rate-limit counter for /feedback. Created via
+# `wrangler kv namespace create FEEDBACK_RL`. If this binding is missing the
+# Worker still serves /feedback but logs a warning and skips the cap.
+[[kv_namespaces]]
+binding = "FEEDBACK_RL"
+id = "a53e138ad6ab4dfd88fbb7ce358375c6"
