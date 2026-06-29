@@ -70,7 +70,7 @@ function downloadRedirect() {
 
 // Bump CACHE_REV after a release to invalidate edge cache without waiting
 // out CACHE_TTL_SECONDS. cache.default keys on the full Request URL.
-const CACHE_REV = "v3";
+const CACHE_REV = "v5";
 
 async function latestJsonResponse(ctx) {
   const cache = caches.default;
@@ -193,9 +193,17 @@ async function fetchReadmeHtml(ctx) {
   );
 
   // Drop the language-switcher line at the very top — landing already
-  // shows brand context elsewhere.
-  html = html.replace(/<p>[^<]*\[中文\][\s\S]*?<\/p>/, "");
-  html = html.replace(/<h1[^>]*>[^<]*LyricLens[^<]*<\/h1>/i, "");
+  // shows brand context elsewhere. GitHub's renderer wraps each heading
+  // in <div class="markdown-heading"> and links in <a>; match the
+  // rendered shape, not the raw markdown.
+  html = html.replace(
+    /<p[^>]*>(?:\s|<[^>]+>)*<a[^>]*>中文<\/a>[\s\S]*?<a[^>]*>English<\/a>[\s\S]*?<\/p>/,
+    ""
+  );
+  html = html.replace(
+    /<div class="markdown-heading"[^>]*>\s*<h1[^>]*>[\s\S]*?LyricLens[\s\S]*?<\/h1>[\s\S]*?<\/div>/i,
+    ""
+  );
 
   const resp = new Response(html, {
     headers: { "content-type": "text/html; charset=utf-8" },
@@ -742,12 +750,28 @@ const LANDING_HTML = `<!doctype html>
     box-shadow: var(--shadow-inset);
   }
 
-  /* Endpoint grid — 4-up on desktop, stacks on narrow viewports */
+  /* Endpoints — matches the README's section style, no card wrap */
+  .endpoints-section { margin-top: 96px; }
+  .section-title {
+    font-size: 40px;
+    font-weight: 600;
+    color: var(--ink-1);
+    line-height: 1.2;
+    letter-spacing: -0.022em;
+    margin: 0 0 24px;
+  }
+  .section-title .jp {
+    font-family: var(--font-jp);
+    font-weight: 500;
+    font-size: 0.5em;
+    color: var(--ink-3);
+    margin-left: 14px;
+    letter-spacing: 0;
+  }
   .endpoints {
-    padding: 8px 22px 22px;
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 12px;
+    gap: 14px;
   }
   .ep {
     display: flex; flex-direction: column; gap: 6px;
@@ -837,17 +861,13 @@ const LANDING_HTML = `<!doctype html>
   [data-theme="yoru"] .theme-toggle .icon-sun { display: block; }
   [data-theme="yoru"] .theme-toggle .icon-moon { display: none; }
 
-  /* GitHub README content rendered through the worker, wrapped in our
-     design system. Live mirror — changes on README.md flow through in
-     ~10 min via worker edge cache. */
-  .readme { margin-top: 40px; }
+  /* GitHub README content rendered through the worker — no card chrome.
+     Treat each ## heading as a product-page section separated by space.
+     Live mirror — changes on README.md flow through in ~10 min. */
+  .readme { margin-top: 96px; }
   .readme-content {
-    background: var(--bg-surface);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-raised);
-    padding: 44px 56px 52px;
     color: var(--ink-2);
-    font-size: 16px;
+    font-size: 17px;
     line-height: 1.75;
     overflow-wrap: anywhere;
   }
@@ -858,13 +878,30 @@ const LANDING_HTML = `<!doctype html>
   .readme-content h3 {
     color: var(--ink-1);
     font-weight: 600;
-    line-height: 1.3;
-    margin: 36px 0 14px;
-    letter-spacing: -0.008em;
+    line-height: 1.2;
+    letter-spacing: -0.015em;
   }
-  .readme-content h1 { font-size: 32px; margin-top: 0; padding-bottom: 14px; border-bottom: 1px solid var(--line-1); }
-  .readme-content h2 { font-size: 24px; padding-top: 12px; margin-top: 44px; }
-  .readme-content h3 { font-size: 19px; margin-top: 28px; }
+  .readme-content h1 { display: none; }
+  .readme-content h2 {
+    font-size: 40px;
+    margin: 112px 0 24px;
+    letter-spacing: -0.022em;
+  }
+  .readme-content > .markdown-heading:first-of-type h2,
+  .readme-content > h2:first-of-type { margin-top: 0; }
+  .readme-content h3 {
+    font-size: 22px;
+    margin: 40px 0 14px;
+    color: var(--ink-1);
+  }
+  .readme-content p {
+    margin: 0 0 16px;
+  }
+  .readme-content > p:first-of-type {
+    font-size: 19px;
+    line-height: 1.65;
+    color: var(--ink-2);
+  }
   .readme-content p { margin: 0 0 12px; }
   .readme-content a {
     color: var(--primary-500);
@@ -912,11 +949,26 @@ const LANDING_HTML = `<!doctype html>
   .readme-content img {
     max-width: 100%;
     height: auto;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
     box-shadow: var(--shadow-pop);
-    margin: 8px 0;
+    display: block;
   }
-  .readme-content p[align="center"] { text-align: center; }
+  /* Screenshot row — README uses <p align="center"> with multiple <img>.
+     Flex makes them sit side-by-side and wrap on narrow viewports. */
+  .readme-content p[align="center"] {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: flex-start;
+    margin: 20px 0 32px;
+  }
+  .readme-content p[align="center"] img {
+    flex: 1 1 280px;
+    min-width: 0;
+    margin: 0;
+  }
+  .readme-content ol li,
+  .readme-content ul li { margin-bottom: 8px; }
   .readme-content hr {
     border: 0;
     border-top: 1px solid var(--line-1);
@@ -943,10 +995,11 @@ const LANDING_HTML = `<!doctype html>
     .hero h1 { font-size: 56px; }
     .hero h1 .jp { font-size: 0.5em; margin-left: 12px; }
     .hero p { font-size: 18px; }
-    .readme-content { padding: 32px 28px 36px; font-size: 15.5px; }
-    .readme-content h1 { font-size: 26px; }
-    .readme-content h2 { font-size: 21px; }
-    .readme-content h3 { font-size: 17px; }
+    .readme { margin-top: 72px; }
+    .readme-content { font-size: 16px; }
+    .readme-content h2 { font-size: 32px; margin: 80px 0 18px; }
+    .readme-content h3 { font-size: 20px; margin: 32px 0 12px; }
+    .readme-content > p:first-of-type { font-size: 18px; }
   }
   @media (max-width: 540px) {
     main { padding: 40px 18px 64px; }
@@ -956,10 +1009,11 @@ const LANDING_HTML = `<!doctype html>
     .btn { height: 44px; font-size: 14px; }
     .row { padding: 14px 16px; }
     .theme-toggle { top: 16px; right: 16px; width: 38px; height: 38px; }
-    .readme-content { padding: 22px 18px 26px; font-size: 15px; }
-    .readme-content h1 { font-size: 22px; }
-    .readme-content h2 { font-size: 19px; }
-    .readme-content h3 { font-size: 16px; }
+    .readme { margin-top: 56px; }
+    .readme-content { font-size: 15px; }
+    .readme-content h2 { font-size: 26px; margin: 64px 0 16px; }
+    .readme-content h3 { font-size: 18px; margin: 28px 0 10px; }
+    .readme-content > p:first-of-type { font-size: 16px; }
   }
 </style>
 <script>
@@ -1027,15 +1081,13 @@ const LANDING_HTML = `<!doctype html>
     <article class="readme-content"><!--README_HTML--></article>
   </section>
 
-  <section>
-    <div class="group">
-      <div class="grp-h">endpoints <span class="jp">· 開発者向け</span></div>
-      <div class="endpoints">
-        <div class="ep"><span class="verb">get</span><span class="path">/download</span><span class="note">302 → github release</span></div>
-        <div class="ep"><span class="verb">get</span><span class="path">/latest.json</span><span class="note">version · changelog · size · digest</span></div>
-        <div class="ep"><span class="verb">get</span><span class="path">/changelog</span><span class="note">text · markdown</span></div>
-        <div class="ep"><span class="verb">get</span><span class="path">/healthz</span><span class="note">ok</span></div>
-      </div>
+  <section class="endpoints-section">
+    <h2 class="section-title">endpoints <span class="jp">· 開発者向け</span></h2>
+    <div class="endpoints">
+      <div class="ep"><span class="verb">get</span><span class="path">/download</span><span class="note">302 → github release</span></div>
+      <div class="ep"><span class="verb">get</span><span class="path">/latest.json</span><span class="note">version · changelog · size · digest</span></div>
+      <div class="ep"><span class="verb">get</span><span class="path">/changelog</span><span class="note">text · markdown</span></div>
+      <div class="ep"><span class="verb">get</span><span class="path">/healthz</span><span class="note">ok</span></div>
     </div>
   </section>
 
