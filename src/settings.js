@@ -4,6 +4,11 @@
   const CONFIG_KEY = "lyriclens.config";
   const LOCAL_STORAGE_KEY = "ll-settings";
   const DEFAULT_SETTINGS = {
+    // Master switch. When false, the plugin stays loaded (its globals,
+    // console-capture hook, and bridge stay live so the user can flip
+    // back on instantly) but skips analysis, hides the overlay, and
+    // stops the capture observer. Persists across NCM restarts.
+    enabled: true,
     apiEndpoint: "",
     apiKey: "",
     modelName: "",
@@ -23,7 +28,14 @@
     cardGenerationMode: "per-line",
     responseFormatMode: "auto",
     modelThinkingMode: "off",
-    companionExePath: ""
+    companionExePath: "",
+    // Update channel — autoCheckUpdate runs a single GET /latest.json at
+    // bootstrap to set a badge in the UI when a new version exists.
+    // Never downloads or installs without user click. lastSeenLatest
+    // remembers the most recent version the user dismissed so we don't
+    // re-pop the same notice every restart.
+    autoCheckUpdate: true,
+    lastSeenLatest: ""
   };
 
   const MODEL_PRESETS = [
@@ -89,6 +101,7 @@
       ? DEFAULT_SETTINGS.fallbackMaxTokens
       : normalizedFallbackMaxTokens;
     return {
+      enabled: input.enabled !== false,
       apiEndpoint: String(input.apiEndpoint ?? ""),
       apiKey: String(input.apiKey ?? ""),
       modelName: String(input.modelName ?? ""),
@@ -120,7 +133,9 @@
       responseFormatMode: ["auto", "json_object", "off"].includes(input.responseFormatMode)
         ? input.responseFormatMode
         : DEFAULT_SETTINGS.responseFormatMode,
-      companionExePath: String(input.companionExePath ?? "").trim()
+      companionExePath: String(input.companionExePath ?? "").trim(),
+      autoCheckUpdate: input.autoCheckUpdate !== false,
+      lastSeenLatest: String(input.lastSeenLatest ?? "")
     };
   }
 

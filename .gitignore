@@ -1,6 +1,16 @@
 # Build artifacts (run `npm run build` to recreate the .plugin)
 LyricLens-*.plugin
 LyricLens-*.plugin.*
+LyricLens.plugin
+
+# Wrangler local cache (contains account email)
+.wrangler/
+
+# Out-of-tree directories not part of LyricLens
+_opc_ppt/
+
+# Research notes that shouldn't be public
+LyricLens_next_stage_technical_research.md
 
 # Rust / Cargo build output (companion/src-tauri/target/ is ~3+ GB)
 **/target/
@@ -28,6 +38,7 @@ Thumbs.db
 .env.local
 .env.*.local
 
-# Session handoff notes — reference infra details that shouldn't be public
+# Session handoff notes — reference infra details / API keys / paths
 HANDOFF.md
+docs/roadmap/HANDOFF-*.md
 .llcheck/

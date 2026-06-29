@@ -603,24 +603,48 @@
   }
 
   // ── Console songId candidate extraction ──
-  // Extracts songId from AMLL-style console strings like:
-  //   "1893590234_XIAY0O"  "560144_ZDX1YM"  "1840862630_FD9D1U"
-  //   "track-1893590234"    "song-1840862630"
-  // Does NOT extract from decimals like "9950.134" or "5110.49"
+  // Extracts a NCM songId from console log args, used as the LAST-RESORT
+  // fallback when PlayState/PlayProgress are dead. False positives here are
+  // expensive: a wrong songId means LyricLens caches and analyzes the wrong
+  // song's lyrics, so we only accept formats that AMLL/NCM actually emit:
+  //
+  //   • AMLL TTML fetch URLs            ".../track-1824020871.ttml"
+  //   • AMLL trackId with random suffix "1893590234_XIAY0O"
+  //   • Explicit "track-/song-" prefix  "track-1893590234"
+  //   • A pure-digit first segment      "1893590234" or "1893590234|tail"
+  //
+  // A bare 5-16 digit run loose in a log line (e.g. "loading playlist
+  // 666443") used to match and was the source of LyricLens picking up the
+  // wrong song's id when NCM logged unrelated playlist/recommendation ids;
+  // this version refuses those.
 
-  const CONSOLE_SONG_ID_RE = /(?:^|[\s|_])(?:track-|song-)?(\d{5,16})(?:_[A-Z0-9]+)?(?:[\s|]|$)/;
+  // Highest-confidence: the trackId embedded in AMLL's TTML fetch URL.
+  // Checked BEFORE the decimal guard because the URL contains dotted host
+  // segments (e.g. ".com/", ".163.com") that would otherwise trip it.
+  const CONSOLE_TTML_URL_RE = /\btrack-(\d{5,16})\.ttml\b/;
+  // Suffix-tagged trackId (group 1) or explicit "track-/song-" prefix
+  // (group 2), embedded anywhere in the string. Boundary chars include
+  // URL separators so `/track-12345_AB/` still matches.
+  const CONSOLE_SONG_ID_RE = /(?:^|[\s|_/-])(?:(\d{5,16})_[A-Z0-9]{2,}|(?:track|song)[-:](\d{5,16}))(?:[\s|/]|$)/;
   const CONSOLE_DECIMAL_RE = /\.\d/;
 
   function extractSongIdFromConsoleString(value) {
     const text = String(value ?? "").trim();
-    if (!text || CONSOLE_DECIMAL_RE.test(text)) return null;
-    // Explicit track-/song- prefix
+    if (!text) return null;
+    // TTML URL: check first so URLs with dotted hostnames don't fail the
+    // decimal guard below.
+    const ttmlMatch = text.match(CONSOLE_TTML_URL_RE);
+    if (ttmlMatch) return ttmlMatch[1];
+    // Decimal guard: rejects "9950.134" style values that aren't songIds.
+    if (CONSOLE_DECIMAL_RE.test(text)) return null;
+    // Explicit track-/song- prefix at the front of the string, or a bare
+    // pure-digit first segment (split on `_`/`|`).
     const stripped = text.replace(/^(?:track|song)[-:]\s*/i, "");
     const firstSegment = stripped.split(/[_|]/)[0].trim();
     if (/^\d{5,16}$/.test(firstSegment)) return firstSegment;
-    // Contextual match
+    // Embedded high-confidence match: suffix-tagged or prefixed only.
     const match = text.match(CONSOLE_SONG_ID_RE);
-    return match ? match[1] : null;
+    return match ? (match[1] || match[2]) : null;
   }
 
   function extractSongIdFromConsoleArgs(argsLike) {

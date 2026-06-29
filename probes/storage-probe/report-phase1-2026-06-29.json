@@ -1,0 +1,71 @@
+{
+  "phase": 1,
+  "capturedAt": "2026-06-29T13:42:53.952Z",
+  "env": {
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/91.0.4472.164 NeteaseMusicDesktop/3.1.23.204764",
+    "location": "orpheus://orpheus/pub/app.html",
+    "origin": "orpheus://orpheus",
+    "hasIndexedDB": true,
+    "hasStorage": false,
+    "hasStorageEstimate": false,
+    "hasStoragePersist": false
+  },
+  "ladder": [
+    {
+      "sizeBytes": 1048576,
+      "label": "1MB",
+      "success": true,
+      "writeMs": 985,
+      "readMs": 28,
+      "readBack": true,
+      "firstByte": 171,
+      "lastByte": 205
+    },
+    {
+      "sizeBytes": 10485760,
+      "label": "10MB",
+      "success": true,
+      "writeMs": 75,
+      "readMs": 155,
+      "readBack": true,
+      "firstByte": 171,
+      "lastByte": 205
+    },
+    {
+      "sizeBytes": 52428800,
+      "label": "50MB",
+      "success": true,
+      "writeMs": 204,
+      "readMs": 477,
+      "readBack": true,
+      "firstByte": 171,
+      "lastByte": 205
+    },
+    {
+      "sizeBytes": 104857600,
+      "label": "100MB",
+      "success": true,
+      "writeMs": 654,
+      "readMs": 173,
+      "readBack": true,
+      "firstByte": 171,
+      "lastByte": 205
+    }
+  ],
+  "marker": {
+    "writtenAt": "2026-06-29T13:42:57.420Z",
+    "writtenAtMs": 1782740577420,
+    "ladderTopBytes": 104857600,
+    "probeVersion": "0.1.0",
+    "sentinel": "lyriclens-probe-b-phase1-marker"
+  },
+  "counts": {
+    "data": 4,
+    "meta": 1
+  },
+  "verdict": "WROTE_UP_TO_100MB",
+  "maxSuccessfulBytes": 104857600,
+  "maxSuccessfulLabel": "100MB",
+  "stoppedReason": "completed",
+  "nextStep": "RESTART NCM (full process) and let probe re-run to verify persistence"
+}

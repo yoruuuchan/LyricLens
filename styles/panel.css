@@ -26,6 +26,7 @@
   --ll-on-primary: #0b1020;
   --ll-success: #3fcb94;
   --ll-danger: #f08484;
+  --ll-ember: #f07830;
   --ll-shadow-lifted: -4px -4px 14px rgba(255,255,255,0.05), 8px 8px 24px rgba(0,0,0,0.55);
   --ll-shadow-raised: -3px -3px 10px rgba(255,255,255,0.05), 5px 5px 16px rgba(0,0,0,0.35);
   --ll-shadow-inset: inset 3px 3px 7px rgba(0,0,0,0.35), inset -2px -2px 5px rgba(255,255,255,0.05);
@@ -33,13 +34,13 @@
   --ll-shadow-primary: 0 4px 14px rgba(122,149,250,0.35);
   --ll-font-ui: "Geist", "Noto Sans SC", "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", sans-serif;
   --ll-font-mono: "Geist Mono", "Cascadia Mono", Consolas, monospace;
-  --ll-type-2xs: 11px;
-  --ll-type-xs: 12px;
-  --ll-type-sm: 13px;
-  --ll-type-base: 14px;
-  --ll-type-md: 15px;
-  --ll-type-lg: 19px;
-  --ll-type-xl: 23px;
+  --ll-type-2xs: 13px;
+  --ll-type-xs: 14px;
+  --ll-type-sm: 15px;
+  --ll-type-base: 15px;
+  --ll-type-md: 17px;
+  --ll-type-lg: 22px;
+  --ll-type-xl: 30px;
   position: fixed;
   z-index: 2147483000;
   container-type: inline-size;
@@ -79,6 +80,7 @@
   --ll-on-primary: #fff;
   --ll-success: #2ba672;
   --ll-danger: #d45d5d;
+  --ll-ember: #f06a20;
   --ll-shadow-lifted: -6px -6px 18px rgba(255,255,255,0.95), 8px 8px 22px rgba(143,158,191,0.45);
   --ll-shadow-raised: -4px -4px 12px rgba(255,255,255,0.95), 4px 4px 14px rgba(143,158,191,0.28);
   --ll-shadow-inset: inset 3px 3px 6px rgba(143,158,191,0.28), inset -3px -3px 6px rgba(255,255,255,0.95);
@@ -88,16 +90,6 @@
 }
 
 .ll-panel[data-font-size="compact"] {
-  --ll-type-2xs: 10px;
-  --ll-type-xs: 11px;
-  --ll-type-sm: 12px;
-  --ll-type-base: 13px;
-  --ll-type-md: 14px;
-  --ll-type-lg: 18px;
-  --ll-type-xl: 21px;
-}
-
-.ll-panel[data-font-size="large"] {
   --ll-type-2xs: 12px;
   --ll-type-xs: 13px;
   --ll-type-sm: 14px;
@@ -105,6 +97,16 @@
   --ll-type-md: 16px;
   --ll-type-lg: 20px;
   --ll-type-xl: 25px;
+}
+
+.ll-panel[data-font-size="large"] {
+  --ll-type-2xs: 14px;
+  --ll-type-xs: 15px;
+  --ll-type-sm: 16px;
+  --ll-type-base: 17px;
+  --ll-type-md: 18px;
+  --ll-type-lg: 24px;
+  --ll-type-xl: 29px;
 }
 
 .ll-panel button,
@@ -462,8 +464,7 @@
 }
 
 .ll-settings-tabs {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  display: flex;
   gap: 2px;
   margin: 12px 14px 0;
   padding: 4px;
@@ -471,6 +472,8 @@
   background: var(--ll-sunken);
   box-shadow: var(--ll-shadow-inset);
 }
+
+.ll-settings-tabs .ll-settings-tab { flex: 1 1 0; min-width: 0; }
 
 .ll-settings-tab {
   height: 36px;
@@ -491,6 +494,8 @@
 .ll-settings-body {
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
   padding: 14px 16px 20px;
 }
 
@@ -768,6 +773,287 @@
   .ll-segment { flex: 1; }
   .ll-bottom { grid-template-columns: 76px minmax(0, 1fr) auto; gap: 8px; padding-inline: 8px; }
   .ll-follow-toggle { min-width: 68px; padding-inline: 7px; }
+}
+
+/* Update channel UI — gear-icon badge + About tab.
+   Ember accent is reserved for "needs attention" affordances per the
+   design system. All variables go through --ll-* to inherit the panel
+   theme (dark/light) and font stack. */
+
+/* Gear-icon badge — `::after` because `.ll-icon-button` is grid and a
+   real child would push the icon off-center. data-attr keeps the
+   render path declarative. */
+.ll-settings-button { position: relative; }
+.ll-settings-button[data-has-update="true"]::after {
+  content: "";
+  position: absolute;
+  top: 6px; right: 6px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--ll-ember, #f07830);
+  box-shadow: 0 0 6px rgba(240, 120, 48, 0.7);
+  pointer-events: none;
+}
+
+/* Ghost button: low-emphasis tertiary action like "跳过此版本". */
+.ll-ghost-button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 12px;
+  padding: 0 13px;
+  font-family: var(--ll-font-ui);
+  font-size: var(--ll-type-sm);
+  font-weight: 500;
+  color: var(--ll-text-muted);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+}
+.ll-ghost-button:hover { color: var(--ll-text-secondary); background: var(--ll-hover); }
+.ll-ghost-button:active { transform: scale(0.985); box-shadow: var(--ll-shadow-inset); }
+
+/* About meta — small key/value pairs at the top of the about tab. */
+.ll-about-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 2px 2px;
+}
+.ll-about-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: var(--ll-type-sm);
+  gap: 12px;
+  font-family: var(--ll-font-ui);
+}
+.ll-about-meta-label { color: var(--ll-text-muted); }
+.ll-about-meta-value {
+  color: var(--ll-text);
+  font-family: var(--ll-font-mono);
+  font-size: var(--ll-type-xs);
+}
+
+.ll-feedback-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--ll-sunken);
+  box-shadow: var(--ll-shadow-inset);
+  font-family: var(--ll-font-ui);
+}
+.ll-feedback-copy { min-width: 0; }
+.ll-feedback-title {
+  color: var(--ll-text);
+  font-size: var(--ll-type-sm);
+  font-weight: 600;
+  line-height: 1.45;
+}
+.ll-feedback-sub {
+  margin-top: 4px;
+  color: var(--ll-text-muted);
+  font-size: var(--ll-type-xs);
+  line-height: 1.5;
+}
+.ll-feedback-input { margin-top: 12px; }
+.ll-feedback-message {
+  height: auto;
+  min-height: 104px;
+  margin-top: 8px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.ll-feedback-trap {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.ll-feedback-counter {
+  margin-top: 4px;
+  text-align: right;
+  color: var(--ll-text-muted);
+  font-family: var(--ll-font-mono);
+  font-size: var(--ll-type-2xs);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.ll-feedback-counter.ll-is-warn { color: var(--ll-ember); }
+.ll-feedback-status {
+  min-height: 18px;
+  margin-top: 6px;
+  color: var(--ll-text-muted);
+  font-size: var(--ll-type-xs);
+  line-height: 1.4;
+}
+.ll-feedback-status-ok { color: var(--ll-success); }
+.ll-feedback-status-fail { color: var(--ll-danger); }
+.ll-feedback-card .ll-secondary-button {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  white-space: nowrap;
+}
+@container (max-width: 355px) {
+  .ll-feedback-card .ll-secondary-button { justify-self: start; }
+}
+
+/* Sunken card carrying the update status block + actions. */
+.ll-update-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--ll-sunken);
+  box-shadow: var(--ll-shadow-inset);
+  font-family: var(--ll-font-ui);
+}
+
+.ll-update-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.ll-update-dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  margin-top: 6px;
+  flex-shrink: 0;
+  background: var(--ll-text-muted);
+}
+.ll-update-dot-ok      { background: var(--ll-success); box-shadow: 0 0 6px rgba(63, 203, 148, 0.5); }
+.ll-update-dot-pending { background: var(--ll-ember, #f07830); box-shadow: 0 0 6px rgba(240, 120, 48, 0.6); }
+.ll-update-dot-error   { background: var(--ll-danger); box-shadow: 0 0 6px rgba(240, 132, 132, 0.5); }
+.ll-update-dot-checking {
+  background: var(--ll-primary);
+  box-shadow: 0 0 6px rgba(122, 149, 250, 0.55);
+  animation: ll-update-pulse 1.4s ease-in-out infinite;
+}
+@keyframes ll-update-pulse {
+  0%, 100% { opacity: 0.5; transform: scale(0.85); }
+  50%      { opacity: 1;   transform: scale(1.15); }
+}
+
+.ll-update-status-text { flex: 1; min-width: 0; }
+.ll-update-status-title {
+  font-size: var(--ll-type-md);
+  font-weight: 600;
+  color: var(--ll-text);
+  margin-bottom: 3px;
+  line-height: 1.4;
+}
+.ll-update-status-sub {
+  font-size: var(--ll-type-sm);
+  color: var(--ll-text-muted);
+  line-height: 1.5;
+}
+
+/* Action row. Buttons get min-width so they don't get crushed when
+   three of them wrap onto two lines. Each button hugs its content. */
+.ll-update-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+.ll-update-actions .ll-primary-button,
+.ll-update-actions .ll-secondary-button,
+.ll-update-actions .ll-ghost-button {
+  flex: 0 1 auto;
+  min-width: auto;
+  padding-inline: 14px;
+  font-family: var(--ll-font-ui);
+}
+
+/* Changelog — a sunken expandable block. The body is rendered by a
+   minimal markdown pass (see Updater.renderMarkdown), so we style
+   headings / lists / code / links here. */
+.ll-changelog {
+  border-radius: 12px;
+  background: var(--ll-sunken);
+  box-shadow: var(--ll-shadow-inset);
+  padding: 12px 14px;
+  margin-top: 4px;
+  font-family: var(--ll-font-ui);
+  overflow-anchor: none;
+}
+.ll-changelog-summary {
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-size: var(--ll-type-sm);
+  color: var(--ll-text-secondary);
+  cursor: pointer;
+  list-style: none;
+  font-weight: 600;
+  display: flex; align-items: center; gap: 6px;
+  text-align: left;
+}
+.ll-changelog-summary::-webkit-details-marker { display: none; }
+.ll-changelog-summary::before {
+  content: "";
+  width: 0; height: 0;
+  border-style: solid;
+  border-width: 4px 0 4px 6px;
+  border-color: transparent transparent transparent var(--ll-text-muted);
+  transition: transform 140ms ease;
+}
+.ll-changelog[open] .ll-changelog-summary::before,
+.ll-changelog.ll-is-open .ll-changelog-summary::before { transform: rotate(90deg); }
+.ll-changelog-body {
+  margin: 10px 0 0;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--ll-line);
+  font-family: var(--ll-font-ui);
+  font-size: var(--ll-type-sm);
+  color: var(--ll-text-secondary);
+  line-height: 1.6;
+  max-height: 280px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+}
+.ll-changelog-body[hidden] { display: none; }
+.ll-changelog-body h1,
+.ll-changelog-body h2,
+.ll-changelog-body h3 {
+  font-size: var(--ll-type-md);
+  font-weight: 600;
+  color: var(--ll-text);
+  margin: 12px 0 6px;
+  line-height: 1.35;
+}
+.ll-changelog-body h1:first-child,
+.ll-changelog-body h2:first-child,
+.ll-changelog-body h3:first-child { margin-top: 0; }
+.ll-changelog-body p { margin: 0 0 8px; }
+.ll-changelog-body p:last-child { margin-bottom: 0; }
+.ll-changelog-body ul,
+.ll-changelog-body ol { margin: 0 0 8px; padding-left: 20px; }
+.ll-changelog-body li { margin-bottom: 3px; }
+.ll-changelog-body code {
+  font-family: var(--ll-font-mono);
+  font-size: 0.92em;
+  background: rgba(0,0,0,0.18);
+  color: var(--ll-text);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.ll-panel[data-theme="light"] .ll-changelog-body code { background: rgba(0,0,0,0.06); }
+.ll-changelog-body a { color: var(--ll-primary); text-decoration: none; border-bottom: 1px solid rgba(122, 149, 250, 0.35); }
+.ll-changelog-body a:hover { border-bottom-color: var(--ll-primary); }
+.ll-changelog-body strong { color: var(--ll-text); font-weight: 600; }
+.ll-changelog-body hr {
+  border: 0;
+  border-top: 1px solid var(--ll-line);
+  margin: 12px 0;
 }
 
 @media (prefers-reduced-motion: reduce) {

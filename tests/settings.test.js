@@ -133,3 +133,22 @@ test("normalizeSettings preserves explicit 24-line limit for selected mode", () 
 
   assert.equal(settings.maxAnalysisLines, 24);
 });
+
+test("normalizeSettings defaults enabled to true and treats only explicit false as off", () => {
+  // Default-on so a brand-new install / blank config doesn't surprise
+  // users with a silent overlay.
+  assert.equal(DEFAULT_SETTINGS.enabled, true);
+  assert.equal(normalizeSettings({}).enabled, true);
+  assert.equal(normalizeSettings({ enabled: true }).enabled, true);
+
+  assert.equal(normalizeSettings({ enabled: false }).enabled, false);
+
+  // Anything other than literal `false` (missing key, 0, "", null,
+  // undefined) keeps the plugin enabled — coarse but safer than
+  // bouncing the user out of analysis because of a serialization
+  // quirk in older configs.
+  assert.equal(normalizeSettings({ enabled: 0 }).enabled, true);
+  assert.equal(normalizeSettings({ enabled: "" }).enabled, true);
+  assert.equal(normalizeSettings({ enabled: null }).enabled, true);
+  assert.equal(normalizeSettings({ enabled: undefined }).enabled, true);
+});

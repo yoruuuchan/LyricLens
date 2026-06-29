@@ -370,6 +370,105 @@ test("requestAnalysis throws ApiParseError when content is not parseable JSON", 
   assert.match(caught.contentSample, /cannot help/);
 });
 
+test("requestAnalysis auto-retries once when first attempt yields unparseable content", async () => {
+  let callCount = 0;
+  const fakeFetch = async () => {
+    callCount += 1;
+    return {
+      ok: true,
+      status: 200,
+      async text() {
+        if (callCount === 1) {
+          return JSON.stringify({
+            choices: [{ message: { content: "Sorry, I cannot help with that." } }]
+          });
+        }
+        return JSON.stringify({
+          choices: [{ message: { content: JSON.stringify({ cards: [{ lineIndex: 0, original: "Hello" }] }) } }]
+        });
+      }
+    };
+  };
+  const result = await requestAnalysis({
+    apiEndpoint: "https://api.siliconflow.cn/v1",
+    apiKey: "sk",
+    modelName: "m",
+    language: "en",
+    formattedLyrics: "[0] Hello",
+    fetchImpl: fakeFetch
+  });
+  assert.equal(callCount, 2);
+  assert.ok(result);
+  assert.equal(Array.isArray(result.cards), true);
+  assert.equal(result.cards.length, 1);
+});
+
+test("requestAnalysis does NOT auto-retry when parse failure is due to length truncation", async () => {
+  let callCount = 0;
+  const fakeFetch = async () => {
+    callCount += 1;
+    return {
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({
+          choices: [{
+            message: { content: '{"cards":[{"lineIndex":0,' },
+            finish_reason: "length"
+          }]
+        });
+      }
+    };
+  };
+  let caught = null;
+  try {
+    await requestAnalysis({
+      apiEndpoint: "https://api.siliconflow.cn/v1",
+      apiKey: "sk",
+      modelName: "m",
+      language: "en",
+      formattedLyrics: "[0] Hello",
+      fetchImpl: fakeFetch
+    });
+  } catch (err) { caught = err; }
+  assert.equal(callCount, 1);
+  assert.ok(caught);
+  assert.equal(caught.name, "ApiParseError");
+  assert.equal(caught.finishReasonWasLength, true);
+});
+
+test("requestAnalysis gives up after one parse retry and exposes fullContent on the error", async () => {
+  let callCount = 0;
+  const fakeFetch = async () => {
+    callCount += 1;
+    return {
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({
+          choices: [{ message: { content: "not json at all" } }]
+        });
+      }
+    };
+  };
+  let caught = null;
+  try {
+    await requestAnalysis({
+      apiEndpoint: "https://api.siliconflow.cn/v1",
+      apiKey: "sk",
+      modelName: "m",
+      language: "en",
+      formattedLyrics: "[0] Hello",
+      fetchImpl: fakeFetch
+    });
+  } catch (err) { caught = err; }
+  assert.equal(callCount, 2);
+  assert.ok(caught);
+  assert.equal(caught.name, "ApiParseError");
+  assert.equal(caught.stage, "content-json");
+  assert.equal(caught.fullContent, "not json at all");
+});
+
 test("requestAnalysis ApiParseError class is exported", () => {
   assert.equal(typeof ApiParseError, "function");
   const e = new ApiParseError("x", { stage: "y", contentSample: "z" });
