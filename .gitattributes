@@ -1,0 +1,5 @@
+# Force LF for shell scripts and Worker JS so they run under WSL/Linux
+# without choking on Windows-introduced CRLF. PowerShell stays CRLF.
+*.sh text eol=lf
+cloudflare-worker/*.js text eol=lf
+*.ps1 text eol=crlf

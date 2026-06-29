@@ -3,7 +3,8 @@
 # Reads CLOUDFLARE_API_TOKEN from ~/.config/codex/private.env when present.
 #
 # Usage: bash deploy.sh
-set -euo pipefail
+set -eu
+set -o pipefail 2>/dev/null || true
 
 ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-5e96dfd2bf22d385e4ffdaa794d74676}"
 SCRIPT_NAME="${WORKER_NAME:-lyriclens-api}"
