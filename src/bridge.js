@@ -70,7 +70,7 @@
     const onCommand = typeof options.onCommand === "function" ? options.onCommand : null;
     const onStatusChange = typeof options.onStatusChange === "function" ? options.onStatusChange : null;
     const getSnapshot = typeof options.getSnapshot === "function" ? options.getSnapshot : null;
-    const clientVersion = String(options.clientVersion || "0.1.0");
+    const clientVersion = String(options.clientVersion || "0.2.0");
     const logger = options.logger || createDefaultLogger();
     // Shared secret presented in the hello frame so the Rust-side bridge
     // can refuse rogue local processes (any other process on this machine,

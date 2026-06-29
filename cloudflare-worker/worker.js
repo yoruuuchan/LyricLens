@@ -68,9 +68,13 @@ function downloadRedirect() {
   return Response.redirect(target, 302);
 }
 
+// Bump CACHE_REV after a release to invalidate edge cache without waiting
+// out CACHE_TTL_SECONDS. cache.default keys on the full Request URL.
+const CACHE_REV = "v2";
+
 async function latestJsonResponse(ctx) {
   const cache = caches.default;
-  const cacheKey = new Request("https://cache.lyriclens/latest.json");
+  const cacheKey = new Request(`https://cache.lyriclens/latest.json?rev=${CACHE_REV}`);
   const cached = await cache.match(cacheKey);
   if (cached) return cached;
 
@@ -87,7 +91,7 @@ async function latestJsonResponse(ctx) {
 
 async function changelogResponse(ctx) {
   const cache = caches.default;
-  const cacheKey = new Request("https://cache.lyriclens/changelog");
+  const cacheKey = new Request(`https://cache.lyriclens/changelog?rev=${CACHE_REV}`);
   const cached = await cache.match(cacheKey);
   if (cached) return cached;
 

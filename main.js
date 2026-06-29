@@ -167,7 +167,7 @@
     if (Bridge?.createBridge) {
       bridge = Bridge.createBridge({
         port: Bridge.DEFAULT_PORT,
-        clientVersion: "0.1.0",
+        clientVersion: "0.2.0",
         token: bridgeToken,
         getSnapshot: buildBridgeSnapshot,
         onStatusChange: (status) => {
