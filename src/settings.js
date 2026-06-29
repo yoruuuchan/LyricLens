@@ -35,8 +35,13 @@
     // remembers the most recent version the user dismissed so we don't
     // re-pop the same notice every restart.
     autoCheckUpdate: true,
-    lastSeenLatest: ""
+    lastSeenLatest: "",
+    targetLanguage: "中文",
+    knowledgePoints: ["vocabulary", "grammar", "culture", "pronunciation", "tone"],
+    customPrompt: ""
   };
+
+  const VALID_KNOWLEDGE_POINTS = ["vocabulary", "grammar", "culture", "pronunciation", "tone"];
 
   const MODEL_PRESETS = [
     { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", model: "deepseek-ai/DeepSeek-V4-Flash" },
@@ -135,8 +140,17 @@
         : DEFAULT_SETTINGS.responseFormatMode,
       companionExePath: String(input.companionExePath ?? "").trim(),
       autoCheckUpdate: input.autoCheckUpdate !== false,
-      lastSeenLatest: String(input.lastSeenLatest ?? "")
+      lastSeenLatest: String(input.lastSeenLatest ?? ""),
+      targetLanguage: String(input.targetLanguage ?? "").trim() || DEFAULT_SETTINGS.targetLanguage,
+      knowledgePoints: normalizeKnowledgePoints(input.knowledgePoints),
+      customPrompt: String(input.customPrompt ?? "")
     };
+  }
+
+  function normalizeKnowledgePoints(value) {
+    if (!Array.isArray(value)) return DEFAULT_SETTINGS.knowledgePoints.slice();
+    const filtered = value.filter((v) => VALID_KNOWLEDGE_POINTS.includes(v));
+    return filtered.length > 0 ? filtered : DEFAULT_SETTINGS.knowledgePoints.slice();
   }
 
   function normalizeNumber(value, fallback, min, max) {
@@ -211,6 +225,7 @@
     CONFIG_KEY,
     DEFAULT_SETTINGS,
     MODEL_PRESETS,
+    VALID_KNOWLEDGE_POINTS,
     normalizeSettings,
     isApiConfigured,
     readSettings,

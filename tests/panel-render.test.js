@@ -309,3 +309,104 @@ test("background updates do not kick the user out of the open settings form", ()
     delete require.cache[require.resolve("../src/panel")];
   }
 });
+
+test("AI settings render learning preferences and regenerate custom prompt from knowledge points", async () => {
+  const previous = {
+    LyricLens: globalThis.LyricLens,
+    document: globalThis.document,
+    localStorage: globalThis.localStorage,
+    innerWidth: globalThis.innerWidth,
+    innerHeight: globalThis.innerHeight,
+    addEventListener: globalThis.addEventListener,
+    removeEventListener: globalThis.removeEventListener
+  };
+  const document = createFakeDocument();
+  globalThis.document = document;
+  globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+  globalThis.innerWidth = 1280;
+  globalThis.innerHeight = 720;
+  globalThis.addEventListener = () => {};
+  globalThis.removeEventListener = () => {};
+
+  globalThis.LyricLens = {
+    diagnostics: {
+      updateState: () => {},
+      getState: () => ({})
+    },
+    Card: null
+  };
+
+  delete require.cache[require.resolve("../src/settings")];
+  delete require.cache[require.resolve("../src/api")];
+  delete require.cache[require.resolve("../src/card")];
+  delete require.cache[require.resolve("../src/panel")];
+  require("../src/settings");
+  require("../src/api");
+  require("../src/card");
+  const { createPanel } = require("../src/panel");
+
+  try {
+    let savedSettings = null;
+    const panel = createPanel({
+      settings: {
+        panelTheme: "light",
+        panelFontSize: "standard",
+        panelOpacity: 0.96,
+        targetLanguage: "中文",
+        knowledgePoints: ["vocabulary", "grammar", "culture", "pronunciation", "tone"],
+        customPrompt: ""
+      },
+      isDebugEnabled: () => false,
+      getDiagnosticState: () => ({}),
+      onSettingsSave: async (settings) => {
+        savedSettings = settings;
+        return settings;
+      }
+    });
+
+    const card = { index: 0, line: "Hello", translation: "你好", highlights: [] };
+    const analysis = {
+      songId: "song-1",
+      language: "en",
+      lines: [{ index: 0, text: "Hello", startTime: 1000 }],
+      cards: [card],
+      cardsByIndex: new Map([[0, card]])
+    };
+    panel.setSongId("song-1");
+    panel.showCard(analysis, 0);
+
+    const panelNode = document.querySelector(".ll-panel");
+    panelNode.querySelector(".ll-settings-button").eventListeners.click?.();
+    panelNode.querySelectorAll(".ll-settings-tab")[1].eventListeners.click?.();
+
+    assert.match(panelNode.textContent, /学习偏好/);
+    assert.match(panelNode.textContent, /自定义 Prompt/);
+    assert.equal(panelNode.querySelectorAll(".ll-knowledge-checkbox").length, 5);
+
+    const textarea = panelNode.querySelector(".ll-prompt-textarea");
+    assert.match(textarea.value, /Vocabulary:/);
+
+    const vocabulary = panelNode.querySelectorAll(".ll-knowledge-checkbox")[0];
+    vocabulary.checked = false;
+    vocabulary.eventListeners.change?.();
+
+    assert.doesNotMatch(textarea.value, /Vocabulary:/);
+    assert.match(textarea.value, /Grammar:/);
+
+    await panelNode.querySelector(".ll-settings-form").eventListeners.submit?.({ preventDefault() {} });
+    assert.deepEqual(savedSettings.knowledgePoints, ["grammar", "culture", "pronunciation", "tone"]);
+    assert.equal(savedSettings.customPrompt, textarea.value);
+  } finally {
+    globalThis.LyricLens = previous.LyricLens;
+    globalThis.document = previous.document;
+    globalThis.localStorage = previous.localStorage;
+    globalThis.innerWidth = previous.innerWidth;
+    globalThis.innerHeight = previous.innerHeight;
+    globalThis.addEventListener = previous.addEventListener;
+    globalThis.removeEventListener = previous.removeEventListener;
+    delete require.cache[require.resolve("../src/settings")];
+    delete require.cache[require.resolve("../src/api")];
+    delete require.cache[require.resolve("../src/card")];
+    delete require.cache[require.resolve("../src/panel")];
+  }
+});

@@ -11,8 +11,12 @@ test("detects English when latin letters dominate", () => {
   assert.equal(detectLanguage(["I really want to stay at your house", "And let yourself go"]), "en");
 });
 
-test("treats CJK without kana as other", () => {
-  assert.equal(detectLanguage(["我真的很想留在你家", "然后放纵自己"]), "other");
+test("detects CJK without kana as Chinese", () => {
+  assert.equal(detectLanguage(["我真的很想留在你家", "然后放纵自己"]), "zh");
+});
+
+test("detects Korean when Hangul is present", () => {
+  assert.equal(detectLanguage(["사랑해요", "이 밤이 지나면"]), "ko");
 });
 
 test("ignores punctuation and whitespace when detecting English", () => {

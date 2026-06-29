@@ -661,7 +661,9 @@ test("fallback parse failure stops after one fallback attempt", async () => {
       await new Promise((resolve) => originalSetTimeout(resolve, 80));
 
       const state = scn.LL.diagnostics.getState();
-      assert.equal(scn.fetchCalls.length, 12, "fallback parse failure must not trigger second-level fallback");
+      // Each fallback chunk gets one auto-retry on parse failure (api.js),
+      // so the count is 2x the original 6 fallback chunks + primary calls.
+      assert.equal(scn.fetchCalls.length, 18, "fallback parse failure must not trigger second-level fallback");
       assert.equal(state.apiStatus, "parse-error");
       assert.equal(state.fallbackReason, "primary-timeout");
       assert.equal(state.fallbackOutcome, "failed");
@@ -683,7 +685,9 @@ test("parse-error and API HTTP errors do not trigger fallback", async () => {
           return JSON.stringify({ choices: [{ message: { content: "not json" } }] });
         }
       },
-      expectedStatus: "parse-error"
+      expectedStatus: "parse-error",
+      // parse failure triggers one auto-retry in api.js
+      expectedFetchCount: 2
     },
     ...[401, 403, 404].map((status) => ({
       name: String(status),
@@ -692,7 +696,8 @@ test("parse-error and API HTTP errors do not trigger fallback", async () => {
         status,
         async text() { return `HTTP ${status}`; }
       },
-      expectedStatus: "error"
+      expectedStatus: "error",
+      expectedFetchCount: 1
     })),
     {
       name: "429",
@@ -701,7 +706,8 @@ test("parse-error and API HTTP errors do not trigger fallback", async () => {
         status: 429,
         async text() { return "HTTP 429"; }
       },
-      expectedStatus: "rate-limited"
+      expectedStatus: "rate-limited",
+      expectedFetchCount: 1
     },
     {
       name: "400",
@@ -710,7 +716,8 @@ test("parse-error and API HTTP errors do not trigger fallback", async () => {
         status: 400,
         async text() { return "HTTP 400"; }
       },
-      expectedStatus: "error"
+      expectedStatus: "error",
+      expectedFetchCount: 1
     }
   ];
 
@@ -723,7 +730,7 @@ test("parse-error and API HTTP errors do not trigger fallback", async () => {
       await wait(30);
 
       const state = scn.LL.diagnostics.getState();
-      assert.equal(scn.fetchCalls.length, 1, `${item.name} must not fallback`);
+      assert.equal(scn.fetchCalls.length, item.expectedFetchCount, `${item.name} must not fallback`);
       assert.equal(state.apiStatus, item.expectedStatus);
       assert.notEqual(state.fallbackOutcome, "success");
     } finally {

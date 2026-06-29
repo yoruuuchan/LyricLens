@@ -13,6 +13,13 @@
   const MIN_HEIGHT = 220;
   const FEEDBACK_URL = "https://lyriclens.yoru-and-akari.dev/feedback";
   const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+  const KNOWLEDGE_POINT_LABELS = {
+    vocabulary: "词汇",
+    grammar: "语法",
+    culture: "文化背景",
+    pronunciation: "发音",
+    tone: "语感"
+  };
   let activePanel = null;
 
   const ICON_SHAPES = {
@@ -953,6 +960,19 @@
       section.appendChild(testRow);
       section.appendChild(Card.el("div", "ll-settings-note", "API Key 仅保存到本地配置，不上传到插件作者服务器。"));
       body.appendChild(section);
+
+      renderLearningSettings(body);
+    }
+
+    function renderLearningSettings(body) {
+      const learning = settingsSection("学习偏好");
+      learning.appendChild(targetLanguageSetting());
+      learning.appendChild(knowledgePointsControl());
+      body.appendChild(learning);
+
+      const prompt = settingsSection("自定义 Prompt");
+      prompt.appendChild(customPromptControl());
+      body.appendChild(prompt);
     }
 
     function renderAdvancedSettings(body) {
@@ -1564,6 +1584,37 @@
       return String(value);
     }
 
+    function getKnowledgePointIds() {
+      return Settings?.VALID_KNOWLEDGE_POINTS || Object.keys(KNOWLEDGE_POINT_LABELS);
+    }
+
+    function selectedKnowledgePoints() {
+      const current = Array.isArray(settings.knowledgePoints) ? settings.knowledgePoints : [];
+      return current.filter((value) => getKnowledgePointIds().includes(value));
+    }
+
+    function buildPromptFocus() {
+      const builder = root.LyricLens?.Api?.buildDefaultFocus;
+      if (typeof builder !== "function") return "";
+      return builder(
+        settings.targetLanguage || "中文",
+        selectedKnowledgePoints(),
+        settings.cardGenerationMode === "selected"
+      );
+    }
+
+    function promptTextareaValue() {
+      const customPrompt = String(settings.customPrompt || "");
+      return customPrompt.trim() ? customPrompt : buildPromptFocus();
+    }
+
+    function regenerateCustomPrompt(textarea) {
+      const generated = buildPromptFocus();
+      settings = { ...settings, customPrompt: generated };
+      if (textarea) textarea.value = generated;
+      return generated;
+    }
+
     function settingsSection(title) {
       const section = Card.el("section", "ll-settings-section");
       section.appendChild(Card.el("h2", "ll-settings-title", title));
@@ -1641,6 +1692,81 @@
       });
       label.appendChild(input);
       return label;
+    }
+
+    function targetLanguageSetting() {
+      const label = Card.el("label", "ll-field");
+      label.appendChild(Card.el("span", "ll-field-label", "目标语言"));
+      const input = Card.el("input", "ll-input ll-target-language-input");
+      input.name = "targetLanguage";
+      input.type = "text";
+      input.value = settings.targetLanguage || "中文";
+      input.autocomplete = "on";
+      input.addEventListener("input", () => {
+        settings = { ...settings, targetLanguage: input.value };
+        const textarea = panel?.querySelector?.(".ll-prompt-textarea");
+        regenerateCustomPrompt(textarea);
+      });
+      label.appendChild(input);
+      label.appendChild(Card.el("span", "ll-field-help", "学习卡片里的翻译和讲解会优先使用这个语言。"));
+      return label;
+    }
+
+    function knowledgePointsControl() {
+      const wrapper = Card.el("div", "ll-knowledge-group");
+      wrapper.appendChild(Card.el("div", "ll-field-label", "知识点"));
+      const grid = Card.el("div", "ll-knowledge-grid");
+      const selected = new Set(selectedKnowledgePoints());
+      getKnowledgePointIds().forEach((id) => {
+        const label = Card.el("label", "ll-knowledge-option");
+        const checkbox = Card.el("input", "ll-knowledge-checkbox");
+        checkbox.type = "checkbox";
+        checkbox.value = id;
+        checkbox.checked = selected.has(id);
+        checkbox.addEventListener("change", () => {
+          const next = new Set(selectedKnowledgePoints());
+          if (checkbox.checked) next.add(id);
+          else if (next.size > 1) next.delete(id);
+          else checkbox.checked = true;
+          settings = { ...settings, knowledgePoints: getKnowledgePointIds().filter((value) => next.has(value)) };
+          const textarea = panel?.querySelector?.(".ll-prompt-textarea");
+          regenerateCustomPrompt(textarea);
+        });
+        label.appendChild(checkbox);
+        label.appendChild(Card.el("span", "ll-knowledge-label", KNOWLEDGE_POINT_LABELS[id] || id));
+        grid.appendChild(label);
+      });
+      wrapper.appendChild(grid);
+      wrapper.appendChild(Card.el("span", "ll-field-help", "勾选后会自动重写下方 Prompt 中间层。"));
+      return wrapper;
+    }
+
+    function customPromptControl() {
+      const details = Card.el("details", "ll-prompt-details");
+      const summary = Card.el("summary", "ll-prompt-summary", "高级：编辑 Prompt 中间层");
+      details.appendChild(summary);
+
+      const content = Card.el("div", "ll-prompt-content");
+      content.appendChild(Card.el("div", "ll-settings-note", "头部（JSON 格式要求）和尾部（输出限制）由系统自动添加，不可编辑。"));
+
+      const textarea = Card.el("textarea", "ll-input ll-prompt-textarea");
+      textarea.name = "customPrompt";
+      textarea.value = promptTextareaValue();
+      textarea.spellcheck = false;
+      textarea.addEventListener("input", () => {
+        settings = { ...settings, customPrompt: textarea.value };
+      });
+      content.appendChild(textarea);
+
+      const row = Card.el("div", "ll-prompt-actions");
+      const restore = Card.el("button", "ll-secondary-button ll-prompt-restore", "恢复默认");
+      restore.type = "button";
+      restore.addEventListener("click", () => regenerateCustomPrompt(textarea));
+      row.appendChild(restore);
+      content.appendChild(row);
+
+      details.appendChild(content);
+      return details;
     }
 
     function numberSetting(labelText, name, scale = 1) {
