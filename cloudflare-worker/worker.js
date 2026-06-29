@@ -70,7 +70,7 @@ function downloadRedirect() {
 
 // Bump CACHE_REV after a release to invalidate edge cache without waiting
 // out CACHE_TTL_SECONDS. cache.default keys on the full Request URL.
-const CACHE_REV = "v7";
+const CACHE_REV = "v8";
 
 async function latestJsonResponse(ctx) {
   const cache = caches.default;
@@ -167,12 +167,14 @@ async function fetchReadmeHtml(ctx) {
   const cached = await cache.match(cacheKey);
   if (cached) return await cached.text();
 
+  // No cf-level cache — that layer is independent of our cache.default
+  // and ignores CACHE_REV, so bumping the rev wouldn't flush it. The
+  // outer cache.match/cache.put block already handles edge caching.
   const upstream = await fetch(`https://api.github.com/repos/${REPO}/readme`, {
     headers: {
       "User-Agent": USER_AGENT,
       "Accept": "application/vnd.github.html",
     },
-    cf: { cacheTtl: CACHE_TTL_SECONDS, cacheEverything: true },
   });
   if (!upstream.ok) return "";
   let html = await upstream.text();
