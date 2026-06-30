@@ -15,3 +15,11 @@ routes = [
 [[kv_namespaces]]
 binding = "FEEDBACK_RL"
 id = "a53e138ad6ab4dfd88fbb7ce358375c6"
+
+# Lazy-cached fonts + release binaries. Worker writes through to R2 on a
+# miss so the first request after a deploy hydrates the bucket; subsequent
+# requests skip the upstream hop. If this binding is missing the proxy
+# routes degrade to a one-shot fetch (no caching) and log a warning.
+[[r2_buckets]]
+binding = "R2_ASSETS"
+bucket_name = "lyriclens-assets"

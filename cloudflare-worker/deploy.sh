@@ -34,12 +34,27 @@ BOUNDARY="----lyriclens-$(date +%s)$RANDOM"
 TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
 
+# Worker bindings — kept in sync with wrangler.toml so a single `bash deploy.sh`
+# carries both the script AND the bindings up. Cloudflare's PUT scripts API
+# REPLACES bindings when the `bindings` array is sent, so this list must be
+# exhaustive. Add new bindings in BOTH files.
+read -r -d '' METADATA_JSON <<JSON || true
+{
+  "main_module": "worker.js",
+  "compatibility_date": "${COMPAT_DATE}",
+  "bindings": [
+    { "name": "FEEDBACK_RL", "type": "kv_namespace", "namespace_id": "a53e138ad6ab4dfd88fbb7ce358375c6" },
+    { "name": "R2_ASSETS", "type": "r2_bucket", "bucket_name": "lyriclens-assets" }
+  ]
+}
+JSON
+
 # Build multipart body: metadata JSON + the script as a module.
 {
   printf -- "--%s\r\n" "$BOUNDARY"
   printf -- 'Content-Disposition: form-data; name="metadata"\r\n'
   printf -- 'Content-Type: application/json\r\n\r\n'
-  printf -- '{"main_module":"worker.js","compatibility_date":"%s"}\r\n' "$COMPAT_DATE"
+  printf -- '%s\r\n' "$METADATA_JSON"
   printf -- "--%s\r\n" "$BOUNDARY"
   printf -- 'Content-Disposition: form-data; name="worker.js"; filename="worker.js"\r\n'
   printf -- 'Content-Type: application/javascript+module\r\n\r\n'
