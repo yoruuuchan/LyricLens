@@ -2,7 +2,18 @@
 
 [中文](README.md) · [English](README.en.md)
 
-BetterNCM AI 歌词学习插件。播放英文/日文歌曲时，读取当前歌词，调用用户配置的 OpenAI 兼容 Chat Completions Endpoint 生成学习卡片，在网易云客户端内显示浮层。当前版本 v0.2，新增插件内一键检查更新，以及直接给开发者发反馈邮件的入口。
+AI 歌词学习浮层。播放歌曲时读取当前歌词，调用用户配置的 OpenAI 兼容 Chat Completions Endpoint 生成学习卡片，跟着歌词滚动显示。
+
+## 两个 host，一个产品
+
+LyricLens 是「一个产品，两个 host」，本仓库是 host 1（BetterNCM 插件）：
+
+| Host | 仓库 | 装在哪 | 取播放信息 | 取歌词 |
+|---|---|---|---|---|
+| **插件版** | 你正在看的这个 | 网易云客户端 + BetterNCM | NCM 内部对象 | NCM 内存 |
+| **桌面版** | [`lyriclens-desktop`](https://github.com/yoruuuchan/lyriclens-desktop) | 独立 Windows 应用 | SMTC（任意支持的播放器） | LRCLIB |
+
+两个 host 都是独立完整产品，**互不依赖**——BetterNCM 哪天停更，桌面版独立运转不受影响。两边通过 JSON 导入/导出打通数据（不做实时同步）。
 
 ## 截图
 

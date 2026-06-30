@@ -2,7 +2,18 @@
 
 [中文](README.md) · [English](README.en.md)
 
-LyricLens is a BetterNCM plugin (v0.1 MVP) that turns NetEase Cloud Music into an AI-powered language-learning overlay. While an English or Japanese song is playing, it reads the current lyrics, asks a user-configured OpenAI-compatible Chat Completions endpoint to produce a learning card, and renders a fixed floating panel inside the NCM client.
+An AI-powered lyric-learning overlay. While a song is playing, LyricLens reads the current lyrics, asks a user-configured OpenAI-compatible Chat Completions endpoint to generate a learning card, and renders it inline with the lyric scroll.
+
+## Two hosts, one product
+
+LyricLens is one product with two independent hosts. This repo is host 1 (the BetterNCM plugin):
+
+| Host | Repository | Where it lives | Now-playing source | Lyric source |
+|---|---|---|---|---|
+| **Plugin** | this repo | NetEase Cloud Music client + BetterNCM | NCM internals | NCM memory |
+| **Desktop** | [`lyriclens-desktop`](https://github.com/yoruuuchan/lyriclens-desktop) | standalone Windows app | SMTC (any supported player) | LRCLIB |
+
+Both hosts are complete, independent products. **If BetterNCM ever stops being maintained, the desktop host keeps the product alive.** The two share schema via JSON import/export — no live sync.
 
 ## Screenshots
 
