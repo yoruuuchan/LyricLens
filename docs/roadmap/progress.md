@@ -13,6 +13,32 @@ tag 含义：`[plan]` 路线决策 / `[probe]` probe 结果 / `[ship]` 产品功
 
 ---
 
+## 2026-06-30 [ship] 桌面版 timeline health probe + debug 面板上线
+
+承接 SMTC timeline 调研报告 §7.3，桌面版把"有没有 timeline"的粗糙 boolean (`durationMs > 0`) 换成 6 档状态机：`unknown` / `metadata_only` / `timeline_candidate` / `timeline_healthy` / `timeline_unstable` / `timeline_dead`。逐行同步只在 healthy / candidate 下生效；metadata_only / dead 自动铺开全部学习卡片；unstable 仍按行 + 警告条。
+
+判定算法比报告再收紧一档（避免 false positive）：
+- 至少 3 帧 snapshot 才能从 unknown 进入 healthy
+- `status === "playing"` 但 position 跨 ≥2s 窗口涨幅不到预期速率的 10% → 降到 metadata_only（无 lastUpdated 变化）或 candidate
+- Jumpy 阈值从 5s 降到 3s
+
+设置 → "调试" tab 新增：当前会话 + 所有 SMTC sibling 会话的原始字段（position / duration / lastUpdated / capturedAt / playbackRate / sourceAppUserModelId）+ 彩色 health 徽章。以后再有"看不到卡片"的反馈，截一张面板图就能秒判病因，不用再走多轮排查。
+
+Rust 端扩 `NowPlaying`：加 `lastUpdatedRawMs`（WinRT DateTime → Unix ms）、`playbackRate`（nullable IReference<f64>）、`sourceAppUserModelId`；新 `smtc_all_sessions` command 枚举所有 session 供 debug 面板用。NowPlaying 显式标 `serde(rename_all = "camelCase")`，对齐前端字段命名。
+
+**真机重大发现**：网易云 Win32（cloudmusic.exe）和 Apple Music Windows 实测都是 `timeline_healthy`——position 按 1× 真在涨，lastUpdated 跟随。这跟 6 月 SMTC 调研报告里基于 Lyricify 文档的"NetEase Win32 没 SMTC timeline / Apple Music timeline 不稳定"完全冲突。要么这两家近期升级了 SMTC 支持，要么是 Lyricify 文档滞后了——两种情况都意味着我们之前对网易云用户的悲观判断被推翻。
+
+但这**不**意味着回头做 NCM 插件兼容：决策 #17 砍掉的是"为了网易云用户专门做 InfLink-rs 兼容"。现在网易云客户端自己就提供了 timeline，桌面版默认就能用上，反而验证了决策 #17 是对的（独立桌面版的北极星更扎实）。
+
+桌面版 PR 顺序：
+- [#4](https://github.com/yoruuuchan/lyriclens-desktop/pull/4) feat(smtc): timeline health probe + debug panel — merge commit `a292f4b`
+- [#5](https://github.com/yoruuuchan/lyriclens-desktop/pull/5) docs(readme): describe timeline health probe + drop allowlist framing — merge commit `cd559b6`
+
+下一步：
+- 桌面版 per-line 分批请求（避开 4096 max_tokens 截断；当前 per-line 模式实际从来跑不通，fallback 强制走 selected）
+- 之后启动学习闭环主菜：`NotebookEntry` SQLite + star + Anki CSV 导出 + JSON import/export
+- 词库基建（Bluskyo JLPT 预处理 + Cloudflare KV 上传 + Tauri command）等学习闭环数据层稳定后再开
+
 ## 2026-06-30 [probe] JLPT 词表调研结果落地 — 选 Bluskyo
 
 GPT 调研报告回来了（`C:\Users\15877\Downloads\lyriclens_jlpt_vocab_research.md`）。核心发现：
