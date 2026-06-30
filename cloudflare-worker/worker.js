@@ -953,11 +953,14 @@ const LANDING_HTML = `<!doctype html>
     color: var(--ink-2);
     margin: 0 0 36px;
     max-width: 620px;
-    /* Let the browser pick a more balanced break point so lines don't
-       end up wildly uneven (e.g. first line ~29 CJK chars, second ~12).
-       Chrome 117+ / Safari 17.4+. Older browsers fall back to default
-       greedy wrapping — no breakage. */
+    /* balance is more aggressive than pretty — pretty mostly fixes
+       orphans/widows on the LAST line, balance equalizes ALL line
+       lengths. Two-line hero copy wants balance so "词汇、" doesn't
+       hang at the end of line 1 with line 2 mostly empty. The pretty
+       line is a fallback for engines that don't recognize balance yet
+       (cascade keeps the last understood value). */
     text-wrap: pretty;
+    text-wrap: balance;
   }
 
   /* Actions */
@@ -1077,22 +1080,25 @@ const LANDING_HTML = `<!doctype html>
   }
   .btn-version:empty { display: none; }
 
-  /* Release timestamp under the action row, paired with version chip. */
+  /* Release timestamp under the action row, paired with version chip.
+     Margin nudged up so the 12px line doesn't crowd the 48px button
+     row above it — overall hero rhythm now reads 36 → 22 → 16 → 28. */
   .release-meta {
     font-family: var(--font-mono);
     font-size: 12px;
     color: var(--ink-3);
     letter-spacing: 0.04em;
-    margin: 14px 0 0;
+    margin: 22px 0 0;
     min-height: 1.2em;
   }
   .release-meta:empty { display: none; }
 
-  /* "前置：需要先装 BetterNCM" hint under the action row. */
+  /* "前置：需要先装 BetterNCM" hint under the action row. Margin paired
+     with .release-meta above to keep the rhythm even. */
   .preqs {
     font-size: 13px;
     color: var(--ink-3);
-    margin: 10px 0 0;
+    margin: 16px 0 0;
   }
   .preqs a {
     color: var(--primary-500);
