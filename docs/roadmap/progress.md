@@ -13,6 +13,53 @@ tag 含义：`[plan]` 路线决策 / `[probe]` probe 结果 / `[ship]` 产品功
 
 ---
 
+## 2026-06-30 [probe] JLPT 词表调研结果落地 — 选 Bluskyo
+
+GPT 调研报告回来了（`C:\Users\15877\Downloads\lyriclens_jlpt_vocab_research.md`）。核心发现：
+
+- **所有可用候选都是 Tanos 谱系**（Tanos / Jonathan Waller 是上游，yomitan-jlpt-vocab / Bluskyo / elzup / open-anki-jlpt-decks / wkei 全是派生）。"多源交叉验证"不成立，是同一上游的多格式。
+- **正式 JLPT 词表不存在**（Japan Foundation 改革后官方明确不公开）。所有社区词表都是 educated guess。
+- **CC BY-SA 不传染代码**——数据包独立分发即可，但改编后的数据文件本身要继续 CC BY-SA。
+
+报告原推荐首选 `stephenmk/yomitan-jlpt-vocab`（CC BY-SA 4.0，维护活跃 + 有 JMdict mapping）。
+
+跟 Yoru 讨论商业化路径："可能会 / 保留选项"——为了避开 ShareAlike 的解释空间，**改选 `Bluskyo/JLPT_Vocabulary`（MIT 仓库 + Tanos CC BY 上游）**。代价是 Bluskyo 质量略不如 yomitan、没有 JMdict mapping、要自己做清洗。MVP 完全够用。
+
+决策落定：
+- 数据源 = Bluskyo（首选）+ yomitan（备选，留 feature flag `JLPT_DATA_SOURCE=bluskyo | yomitan | off`）
+- 分发 = Cloudflare KV，manifest.json + immutable versioned blob
+- 客户端 = Tauri Rust 侧 HashMap，词库不进 SQLite（SQLite 只用于 `NotebookEntry`）
+- 不分词 MVP（直接用 LLM `highlight.text` 做 surface lookup，等真发现误标多再上 lindera/sudachi.rs）
+- UI 严格写「参考等级」；多 level 候选显示 "JLPT N3 / N4"，命中唯一的就 "JLPT N5"
+- About 页面 attribution 必须列 Bluskyo + Tanos/Jonathan Waller
+
+详细 schema / KV 结构 / Rust 实现路径 / attribution 模板 → [`docs/schema/jlpt-vocab.md`](../schema/jlpt-vocab.md)。
+
+更新决策 #12（README）补充选定方案 + 理由 + feature flag 切换预案。
+
+下一步：等桌面版 timeline health probe + SQLite NotebookEntry 落地后，开词库基建（Bluskyo 数据预处理脚本 + KV 上传 + Tauri command）。
+
+## 2026-06-30 [plan] 桌面版双 host 决策日 + JLPT 词表调研启动
+
+桌面版 MVP 真机验收过程中触发了一批长期方向决策。基础是这次 SMTC timeline 调研报告（GPT 产出，文件在 `C:\Users\15877\Downloads\lyriclens_smtc_timeline_research.md`）。Yoru + Claude 把整张产品方向图过了一遍，锁了 8 条新决策（README 的「路线决策追加（2026-06-30）」）。
+
+核心决策：
+- **平台只 Windows**。macOS / Linux 砍掉。roadmap 阶段 4 跨平台段落作废。
+- **学习闭环 = 笔记本式**。Star + 自加备注 + 导出给 Anki，不做 SRS、不做词频统计。
+- **收藏粒度 = 一句歌词的整张卡片**。统一数据模型 `NotebookEntry`，schema 详见 [`docs/schema/notebook-entry.md`](../schema/notebook-entry.md)。
+- **MVP 词库扩展 = CEFR-J（英）+ JLPT（日）双语**。修订 #7。JLPT 词表的具体选择需要 license 调研（in flight）。
+- **跨 host 数据合并 = 两边都保留 + 备注拼接**。import 不覆盖本地。
+- **永久砍掉列表明示**：WASAPI / NCM 插件兼容 / 苹果生态 / Spotify 深度集成 / 实时同步 / SRS / 词频。
+
+`NotebookEntry` schema 文档已落到 `docs/schema/notebook-entry.md`，两个 host 都按这个实现。songKey 算法跟桌面版当前 `trackKey()` 对齐，保证业务唯一性能跨 host 匹配。
+
+JLPT 词表 license 调研 prompt 已交付 Yoru，预计本周拿到推荐方案（首选 + 备选 + 集成方案）。等结果回来再开词库基建。
+
+下一步：
+- 桌面版立刻可做的几项：timeline health probe 5 档状态机 + debug 面板、per-line 分批请求、README 改 health-based 文案
+- 插件版这边等 JLPT 调研结果回来再动词库相关任务
+- 等桌面版 SQLite schema 落地稳定后，启动插件版 IndexedDB store 的对应实现
+
 ## 2026-06-30 [ship] Task #4 扩展 — typed learning points 上线
 
 承接 Codex 提交的 PR #4，真机验收时发现：知识点勾选只是给 LLM 改 prompt 提示，**卡片渲染并不反映勾选**——比如截图里"It's only love"那种简单句，points 一直显示 fallback "这一句以语气和情绪表达为主"，"学习点"也分不出是哪一类。
