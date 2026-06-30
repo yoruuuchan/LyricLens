@@ -384,6 +384,7 @@
     let aboutLastWheelDeltaY = 0;
     let aboutScrollRestoreScheduled = false;
     let feedbackDraft = { email: "", message: "", status: "", statusKind: "" };
+    let promptEditorOpen = false;
     // Update channel state — set by main.js after Updater.checkForUpdate
     // runs in the background. UI uses it to badge the gear icon and to
     // populate the "关于 / 更新" settings tab.
@@ -1743,7 +1744,22 @@
 
     function customPromptControl() {
       const details = Card.el("details", "ll-prompt-details");
+      details.open = promptEditorOpen;
       const summary = Card.el("summary", "ll-prompt-summary", "高级：编辑 Prompt 中间层");
+      summary.setAttribute("aria-expanded", String(promptEditorOpen));
+      summary.addEventListener("click", (event) => {
+        event.preventDefault();
+        const scroller = panel?.querySelector?.(".ll-settings-body");
+        const beforeScrollTop = scroller ? scroller.scrollTop : 0;
+        promptEditorOpen = !promptEditorOpen;
+        details.open = promptEditorOpen;
+        summary.setAttribute("aria-expanded", String(promptEditorOpen));
+        const restoreScroll = () => {
+          if (scroller && scroller.scrollTop !== beforeScrollTop) scroller.scrollTop = beforeScrollTop;
+        };
+        restoreScroll();
+        if (typeof root.requestAnimationFrame === "function") root.requestAnimationFrame(restoreScroll);
+      });
       details.appendChild(summary);
 
       const content = Card.el("div", "ll-prompt-content");

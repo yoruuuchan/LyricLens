@@ -410,3 +410,98 @@ test("AI settings render learning preferences and regenerate custom prompt from 
     delete require.cache[require.resolve("../src/panel")];
   }
 });
+
+test("custom prompt disclosure keeps open state and settings scroll position", () => {
+  const previous = {
+    LyricLens: globalThis.LyricLens,
+    document: globalThis.document,
+    localStorage: globalThis.localStorage,
+    innerWidth: globalThis.innerWidth,
+    innerHeight: globalThis.innerHeight,
+    addEventListener: globalThis.addEventListener,
+    removeEventListener: globalThis.removeEventListener,
+    requestAnimationFrame: globalThis.requestAnimationFrame
+  };
+  const document = createFakeDocument();
+  globalThis.document = document;
+  globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+  globalThis.innerWidth = 1280;
+  globalThis.innerHeight = 720;
+  globalThis.addEventListener = () => {};
+  globalThis.removeEventListener = () => {};
+  globalThis.requestAnimationFrame = (callback) => callback();
+
+  globalThis.LyricLens = {
+    diagnostics: {
+      updateState: () => {},
+      getState: () => ({})
+    },
+    Card: null
+  };
+
+  delete require.cache[require.resolve("../src/settings")];
+  delete require.cache[require.resolve("../src/api")];
+  delete require.cache[require.resolve("../src/card")];
+  delete require.cache[require.resolve("../src/panel")];
+  require("../src/settings");
+  require("../src/api");
+  require("../src/card");
+  const { createPanel } = require("../src/panel");
+
+  try {
+    const panel = createPanel({
+      settings: {
+        panelTheme: "light",
+        panelFontSize: "standard",
+        panelOpacity: 0.96,
+        targetLanguage: "中文",
+        knowledgePoints: ["vocabulary", "grammar"],
+        customPrompt: ""
+      },
+      isDebugEnabled: () => false,
+      getDiagnosticState: () => ({})
+    });
+
+    const card = { index: 0, line: "Hello", translation: "你好", highlights: [] };
+    const analysis = {
+      songId: "song-1",
+      language: "en",
+      lines: [{ index: 0, text: "Hello", startTime: 1000 }],
+      cards: [card],
+      cardsByIndex: new Map([[0, card]])
+    };
+    panel.setSongId("song-1");
+    panel.showCard(analysis, 0);
+
+    const panelNode = document.querySelector(".ll-panel");
+    panelNode.querySelector(".ll-settings-button").eventListeners.click?.();
+    panelNode.querySelectorAll(".ll-settings-tab")[1].eventListeners.click?.();
+
+    const body = panelNode.querySelector(".ll-settings-body");
+    body.scrollTop = 140;
+    const summary = panelNode.querySelector(".ll-prompt-summary");
+    summary.eventListeners.click?.({ preventDefault() {} });
+
+    assert.equal(panelNode.querySelector(".ll-prompt-details").open, true);
+    assert.equal(summary.attributes["aria-expanded"], "true");
+    assert.equal(body.scrollTop, 140);
+
+    panel.setUpdateState({ status: "checking" });
+    const renderedBody = panelNode.querySelector(".ll-settings-body");
+    assert.equal(panelNode.querySelector(".ll-prompt-details").open, true);
+    assert.equal(renderedBody.scrollTop, 140);
+  } finally {
+    globalThis.LyricLens = previous.LyricLens;
+    globalThis.document = previous.document;
+    globalThis.localStorage = previous.localStorage;
+    globalThis.innerWidth = previous.innerWidth;
+    globalThis.innerHeight = previous.innerHeight;
+    globalThis.addEventListener = previous.addEventListener;
+    globalThis.removeEventListener = previous.removeEventListener;
+    globalThis.requestAnimationFrame = previous.requestAnimationFrame;
+    delete require.cache[require.resolve("../src/settings")];
+    delete require.cache[require.resolve("../src/api")];
+    delete require.cache[require.resolve("../src/card")];
+    delete require.cache[require.resolve("../src/panel")];
+  }
+});
