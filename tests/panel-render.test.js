@@ -482,13 +482,14 @@ test("custom prompt disclosure keeps open state and settings scroll position", (
     const summary = panelNode.querySelector(".ll-prompt-summary");
     summary.eventListeners.click?.({ preventDefault() {} });
 
-    assert.equal(panelNode.querySelector(".ll-prompt-details").open, true);
+    assert.equal(panelNode.querySelector(".ll-prompt-details").classList.values.has("ll-is-open"), true);
     assert.equal(summary.attributes["aria-expanded"], "true");
     assert.equal(body.scrollTop, 140);
 
     panel.setUpdateState({ status: "checking" });
     const renderedBody = panelNode.querySelector(".ll-settings-body");
-    assert.equal(panelNode.querySelector(".ll-prompt-details").open, true);
+    assert.equal(panelNode.querySelector(".ll-prompt-details").classList.values.has("ll-is-open"), true);
+    assert.equal(panelNode.querySelector(".ll-prompt-content").hidden, false);
     assert.equal(renderedBody.scrollTop, 140);
   } finally {
     globalThis.LyricLens = previous.LyricLens;

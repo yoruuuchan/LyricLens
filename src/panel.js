@@ -704,12 +704,7 @@
       panel.appendChild(content);
       if (restoreSettingsTab && restoreSettingsTab === settingsTab && restoreSettingsScrollTop > 0) {
         const body = panel.querySelector(".ll-settings-body");
-        if (body) {
-          body.scrollTop = restoreSettingsScrollTop;
-          requestAnimationFrame(() => {
-            if (body.isConnected && body.scrollTop === 0) body.scrollTop = restoreSettingsScrollTop;
-          });
-        }
+        restoreSettingsBodyScroll(body, restoreSettingsScrollTop);
       }
       if (options.isDebugEnabled?.() && mode !== "debug") panel.appendChild(renderDebugEntry());
       if (mode === "card" && !settingsOpen) panel.appendChild(renderFooter());
@@ -1616,6 +1611,30 @@
       return generated;
     }
 
+    function withStableSettingsScroll(change) {
+      const body = panel?.querySelector?.(".ll-settings-body");
+      const scrollTop = body ? body.scrollTop : 0;
+      change?.();
+      restoreSettingsBodyScroll(body, scrollTop);
+    }
+
+    function restoreSettingsBodyScroll(body, scrollTop) {
+      if (!body || !Number.isFinite(Number(scrollTop))) return;
+      const restore = () => {
+        if (body.isConnected === false) return;
+        if (body.scrollTop !== scrollTop) body.scrollTop = scrollTop;
+      };
+      restore();
+      Promise.resolve().then(restore);
+      if (typeof root.requestAnimationFrame === "function") {
+        root.requestAnimationFrame(() => {
+          restore();
+          root.requestAnimationFrame(restore);
+        });
+      }
+      if (typeof root.setTimeout === "function") root.setTimeout(restore, 0);
+    }
+
     function settingsSection(title) {
       const section = Card.el("section", "ll-settings-section");
       section.appendChild(Card.el("h2", "ll-settings-title", title));
@@ -1743,26 +1762,24 @@
     }
 
     function customPromptControl() {
-      const details = Card.el("details", "ll-prompt-details");
-      details.open = promptEditorOpen;
-      const summary = Card.el("summary", "ll-prompt-summary", "高级：编辑 Prompt 中间层");
-      summary.setAttribute("aria-expanded", String(promptEditorOpen));
-      summary.addEventListener("click", (event) => {
+      const wrapper = Card.el("div", promptEditorOpen ? "ll-prompt-details ll-is-open" : "ll-prompt-details");
+      const toggle = Card.el("button", "ll-prompt-summary", "高级：编辑 Prompt 中间层");
+      toggle.type = "button";
+      toggle.setAttribute("aria-expanded", String(promptEditorOpen));
+      toggle.addEventListener("click", (event) => {
         event.preventDefault();
-        const scroller = panel?.querySelector?.(".ll-settings-body");
-        const beforeScrollTop = scroller ? scroller.scrollTop : 0;
-        promptEditorOpen = !promptEditorOpen;
-        details.open = promptEditorOpen;
-        summary.setAttribute("aria-expanded", String(promptEditorOpen));
-        const restoreScroll = () => {
-          if (scroller && scroller.scrollTop !== beforeScrollTop) scroller.scrollTop = beforeScrollTop;
-        };
-        restoreScroll();
-        if (typeof root.requestAnimationFrame === "function") root.requestAnimationFrame(restoreScroll);
+        withStableSettingsScroll(() => {
+          promptEditorOpen = !promptEditorOpen;
+          wrapper.classList.toggle("ll-is-open", promptEditorOpen);
+          toggle.setAttribute("aria-expanded", String(promptEditorOpen));
+          content.hidden = !promptEditorOpen;
+        });
+        toggle.blur?.();
       });
-      details.appendChild(summary);
+      wrapper.appendChild(toggle);
 
       const content = Card.el("div", "ll-prompt-content");
+      content.hidden = !promptEditorOpen;
       content.appendChild(Card.el("div", "ll-settings-note", "头部（JSON 格式要求）和尾部（输出限制）由系统自动添加，不可编辑。"));
 
       const textarea = Card.el("textarea", "ll-input ll-prompt-textarea");
@@ -1781,8 +1798,8 @@
       row.appendChild(restore);
       content.appendChild(row);
 
-      details.appendChild(content);
-      return details;
+      wrapper.appendChild(content);
+      return wrapper;
     }
 
     function numberSetting(labelText, name, scale = 1) {

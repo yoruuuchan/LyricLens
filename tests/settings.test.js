@@ -152,3 +152,14 @@ test("normalizeSettings defaults enabled to true and treats only explicit false 
   assert.equal(normalizeSettings({ enabled: null }).enabled, true);
   assert.equal(normalizeSettings({ enabled: undefined }).enabled, true);
 });
+
+test("normalizeSettings repairs UTF-8 mojibake in learning prompt settings", () => {
+  const settings = normalizeSettings({
+    targetLanguage: "ä¸­æ",
+    customPrompt: "Content rules:\n- translation must be natural ä¸­æ.\n- note: â¤100 ä¸­æ characters."
+  });
+
+  assert.equal(settings.targetLanguage, "中文");
+  assert.match(settings.customPrompt, /natural 中文/);
+  assert.match(settings.customPrompt, /≤100 中文/);
+});

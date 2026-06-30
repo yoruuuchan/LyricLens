@@ -724,11 +724,16 @@
 }
 
 .ll-prompt-summary {
+  width: 100%;
+  border: 0;
+  padding: 0;
   color: var(--ll-text-secondary);
+  background: transparent;
   cursor: pointer;
   list-style: none;
   font-size: var(--ll-type-sm);
   font-weight: 600;
+  text-align: left;
 }
 
 .ll-prompt-summary::-webkit-details-marker { display: none; }
@@ -745,7 +750,7 @@
   transition: transform 140ms ease;
 }
 
-.ll-prompt-details[open] .ll-prompt-summary::before { transform: rotate(90deg); }
+.ll-prompt-details.ll-is-open .ll-prompt-summary::before { transform: rotate(90deg); }
 
 .ll-prompt-content {
   display: grid;
@@ -754,6 +759,8 @@
   padding-top: 10px;
   border-top: 1px solid var(--ll-line);
 }
+
+.ll-prompt-content[hidden] { display: none; }
 
 .ll-prompt-textarea {
   height: auto;
