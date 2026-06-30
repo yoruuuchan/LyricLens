@@ -46,9 +46,9 @@
 ├─ ⏳ Task #15 · core 抽取 + 双 host interface 设计 ← 核心
 ├─ ⏳ Task #16 · LyricSource pluggable interface（NCM = source 1）
 ├─ ⏳ Task #18 · 跨 host 数据互通格式（plugin ↔ desktop import/export）
-├─ ⏳ Probe D · Now Playing API 覆盖率（task #13，SMTC/MRMR/MPRIS）
-├─ ⏳ Probe E · 歌词反查命中率 benchmark（task #14）
-└─ ⏳ Task #4 · 自定义 prompt + 知识点勾选
+├─ ✅ Probe D · Now Playing API 覆盖率（task #13，SMTC/MRMR/MPRIS）
+├─ ✅ Probe E · 歌词反查命中率 benchmark（task #14）
+└─ ⏳ Task #4 · 自定义 prompt + 知识点勾选（PR #4 draft，等最终真机验收/merge）
 
 阶段 3 · 学习闭环
 ├─ ⏳ Task #5 · 词库 CDN
@@ -78,7 +78,7 @@
 
 ## ⚠️ 当前 IN-PROGRESS
 
-**`HANDOFF-2026-06-30.md` 是最新交接，先读它再做任何事。**
+**`HANDOFF-2026-06-30-session2.md` 是最新交接，先读它再做任何事。**
 
 ## 关键参考文档
 
