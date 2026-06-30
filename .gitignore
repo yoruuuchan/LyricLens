@@ -11,6 +11,10 @@ _opc_ppt/
 
 # Research notes that shouldn't be public
 LyricLens_next_stage_technical_research.md
+LyricLens_D_E_research_raw_urls.md
+
+# Local probe scripts / benchmark results (run ad-hoc, not part of the plugin)
+probes/
 
 # Rust / Cargo build output (companion/src-tauri/target/ is ~3+ GB)
 **/target/
