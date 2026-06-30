@@ -44,7 +44,7 @@ export default {
           return await landingResponse(ctx);
         case "/download":
         case "/download/":
-          return downloadRedirect();
+          return await downloadResponse(env, ctx);
         case "/latest.json":
           return await latestJsonResponse(ctx);
         case "/changelog":
@@ -55,9 +55,15 @@ export default {
           return new Response("Method not allowed", { status: 405, headers: textHeaders(0) });
         case "/healthz":
           return new Response("ok", { status: 200, headers: textHeaders() });
+        case "/favicon.svg":
+        case "/favicon.ico":
+          return faviconResponse();
         case "/robots.txt":
           return new Response("User-agent: *\nDisallow:\n", { status: 200, headers: textHeaders() });
         default:
+          if (url.pathname.startsWith("/assets/fonts/")) {
+            return await fontProxyResponse(url.pathname.slice("/assets/fonts/".length), env, ctx);
+          }
           return notFound();
       }
     } catch (err) {
@@ -72,8 +78,36 @@ export default {
 function downloadRedirect() {
   // GitHub serves the latest release's asset by name at this URL — no API
   // call needed as long as we keep the asset name stable across releases.
+  // Used as a fallback when the R2 proxy path can't resolve (no version
+  // known, R2 binding missing, or upstream blob fetch fails).
   const target = `https://github.com/${REPO}/releases/latest/download/${ASSET_NAME}`;
   return Response.redirect(target, 302);
+}
+
+// Primary /download handler — serves the .plugin through our edge so users
+// in regions where GitHub Releases is slow/unreachable get a stable path.
+// First request after a release hydrates R2; subsequent requests are pure
+// R2 reads. Any breakage (no version, R2 down, upstream 5xx) silently
+// falls back to the legacy 302, so users always get *some* download.
+async function downloadResponse(env, ctx) {
+  const latest = await fetchLatestPayloadSafe();
+  if (!latest?.github_asset_url || !latest?.version) {
+    return downloadRedirect();
+  }
+  try {
+    return await assetProxy({
+      env,
+      ctx,
+      r2Key: `releases/${latest.version}/${ASSET_NAME}`,
+      upstreamUrl: latest.github_asset_url,
+      contentType: "application/octet-stream",
+      immutable: true,
+      disposition: `attachment; filename="${ASSET_NAME}"`,
+    });
+  } catch (err) {
+    try { console.warn("[LyricLens] /download R2 proxy failed, falling back to 302:", err?.message || err); } catch (_) {}
+    return downloadRedirect();
+  }
 }
 
 // Bump CACHE_REV after a release to invalidate edge cache without waiting
@@ -164,39 +198,72 @@ async function fetchLatestPayload() {
 }
 
 async function landingResponse(ctx) {
-  const readmeHtml = await fetchReadmeHtml(ctx);
-  const body = LANDING_HTML.replace("<!--README_HTML-->", readmeHtml || "");
+  // Fan-out: README + latest release in parallel. Both have their own
+  // edge-cache layers so most requests skip the upstream hop entirely.
+  const [readme, latest] = await Promise.all([
+    fetchReadmeParts(ctx),
+    fetchLatestPayloadSafe(),
+  ]);
+
+  const versionTag = latest?.version ? `v${latest.version}` : "";
+  const versionMeta = latest?.published_at
+    ? `${versionTag} · ${formatPubDate(latest.published_at)} 发布`
+    : "";
+
+  const body = LANDING_HTML
+    .replace("<!--HERO_SCREENS-->", readme.screenshotHtml || "")
+    .replace("<!--README_HTML-->", readme.html || "")
+    .replace("<!--VERSION_TAG-->", escapeHtml(versionTag))
+    .replace("<!--VERSION_META-->", escapeHtml(versionMeta));
+
   return new Response(body, { status: 200, headers: htmlHeaders(60) });
 }
 
-async function fetchReadmeHtml(ctx) {
-  const cache = caches.default;
-  const cacheKey = new Request(`https://cache.lyriclens/readme?rev=${CACHE_REV}`);
-  const cached = await cache.match(cacheKey);
-  if (cached) return await cached.text();
+// Wraps fetchLatestPayload so a failed GitHub call doesn't blow up the
+// landing render — we just skip the version chip in that case.
+async function fetchLatestPayloadSafe() {
+  try {
+    const payload = await fetchLatestPayload();
+    return payload.ok ? payload.body : null;
+  } catch (_) {
+    return null;
+  }
+}
 
-  // No cf-level cache — that layer is independent of our cache.default
-  // and ignores CACHE_REV, so bumping the rev wouldn't flush it. The
-  // outer cache.match/cache.put block already handles edge caching.
+function formatPubDate(iso) {
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  } catch (_) {
+    return "";
+  }
+}
+
+async function fetchReadmeParts(ctx) {
+  const cache = caches.default;
+  const cacheKey = new Request(`https://cache.lyriclens/readme-parts?rev=${CACHE_REV}`);
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    try { return await cached.json(); } catch (_) {}
+  }
+
   const upstream = await fetch(`https://api.github.com/repos/${REPO}/readme`, {
     headers: {
       "User-Agent": USER_AGENT,
       "Accept": "application/vnd.github.html",
     },
   });
-  if (!upstream.ok) return "";
+  if (!upstream.ok) return { html: "", screenshotHtml: "" };
   let html = await upstream.text();
 
-  // Trim from "调试日志" section onward — that's where the README turns
-  // developer-facing (logs / diagnostics / verification template / npm test).
-  const marker = html.indexOf("调试日志");
-  if (marker > 0) {
-    const h2Start = html.lastIndexOf("<h2", marker);
-    if (h2Start > 0) html = html.slice(0, h2Start);
-  }
-
   // Rewrite relative URLs (screenshots, links) to absolute GitHub URLs so
-  // they resolve when the README is served from our domain.
+  // they resolve when the README is served from our domain. Do this BEFORE
+  // extracting the screenshot block — otherwise the extracted HTML would
+  // still carry the relative paths.
   html = html.replace(
     /(src|href)="(?!https?:|#|\/\/|mailto:)([^"]+)"/g,
     `$1="https://raw.githubusercontent.com/${REPO}/main/$2"`
@@ -215,11 +282,38 @@ async function fetchReadmeHtml(ctx) {
     ""
   );
 
-  const resp = new Response(html, {
-    headers: { "content-type": "text/html; charset=utf-8" },
+  // Trim from "配置" section onward — API endpoint / API key / model name
+  // is configuration the user can't act on before installing; let GitHub
+  // README own those details so landing stays install-focused. Falls back
+  // to "调试日志" in case "配置" gets renamed in a future README edit.
+  for (const marker of ["配置", "调试日志"]) {
+    const idx = html.indexOf(marker);
+    if (idx <= 0) continue;
+    const h2Start = html.lastIndexOf("<h2", idx);
+    if (h2Start > 0) {
+      const wrapperStart = html.lastIndexOf("<div class=\"markdown-heading\"", h2Start);
+      const cut = wrapperStart > 0 ? wrapperStart : h2Start;
+      html = html.slice(0, cut);
+      break;
+    }
+  }
+
+  // Extract the first <p align="center"> block (the screenshot strip) so
+  // landing can render it inside the hero. The block is removed from the
+  // README body to avoid showing it twice.
+  let screenshotHtml = "";
+  const screenshotMatch = html.match(/<p[^>]*align=["']center["'][^>]*>[\s\S]*?<\/p>/i);
+  if (screenshotMatch) {
+    screenshotHtml = screenshotMatch[0];
+    html = html.replace(screenshotMatch[0], "");
+  }
+
+  const parts = { html, screenshotHtml };
+  const resp = new Response(JSON.stringify(parts), {
+    headers: { "content-type": "application/json; charset=utf-8" },
   });
   ctx.waitUntil(cache.put(cacheKey, resp.clone()));
-  return html;
+  return parts;
 }
 
 async function feedbackResponse(request, env) {
@@ -418,6 +512,123 @@ function notFound() {
   return new Response("Not found", { status: 404, headers: textHeaders() });
 }
 
+// Brand mark — lamp (akari, ember) overlapping night (yoru, primary).
+// SVG so it stays crisp at any tab/bookmark size. Served from /favicon.svg
+// and also /favicon.ico so browsers that probe the legacy path still hit it.
+const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <radialGradient id="ll-lamp" cx="35%" cy="30%" r="75%">
+      <stop offset="18%" stop-color="#FFD4B0"/>
+      <stop offset="55%" stop-color="#FF9456"/>
+      <stop offset="100%" stop-color="#F06A20"/>
+    </radialGradient>
+    <radialGradient id="ll-night" cx="32%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#3D58D4"/>
+      <stop offset="100%" stop-color="#2E44B0"/>
+    </radialGradient>
+  </defs>
+  <circle cx="21" cy="16" r="10" fill="url(#ll-night)"/>
+  <circle cx="22.5" cy="11" r="1.4" fill="#92A8FB" opacity="0.85"/>
+  <circle cx="11" cy="16" r="10" fill="url(#ll-lamp)"/>
+</svg>`;
+
+function faviconResponse() {
+  return new Response(FAVICON_SVG, {
+    status: 200,
+    headers: {
+      "content-type": "image/svg+xml; charset=utf-8",
+      "cache-control": "public, max-age=86400, s-maxage=86400",
+    },
+  });
+}
+
+// Self-host the three webfonts the landing page uses. Key by a short
+// filename so the public URL stays clean (/assets/fonts/geist-sans.woff2)
+// and the upstream jsdelivr path is an implementation detail we can swap.
+const FONT_UPSTREAM = {
+  "geist-sans.woff2": "https://cdn.jsdelivr.net/npm/geist@1/dist/fonts/geist-sans/Geist-Variable.woff2",
+  "geist-mono.woff2": "https://cdn.jsdelivr.net/npm/geist@1/dist/fonts/geist-mono/GeistMono-Variable.woff2",
+  "zen-kaku.woff2": "https://cdn.jsdelivr.net/npm/@fontsource/zen-kaku-gothic-new@5.0.13/files/zen-kaku-gothic-new-japanese-400-normal.woff2",
+};
+
+async function fontProxyResponse(filename, env, ctx) {
+  const upstream = FONT_UPSTREAM[filename];
+  if (!upstream) return notFound();
+  try {
+    return await assetProxy({
+      env,
+      ctx,
+      r2Key: `fonts/${filename}`,
+      upstreamUrl: upstream,
+      contentType: "font/woff2",
+      immutable: true,
+    });
+  } catch (err) {
+    try { console.warn(`[LyricLens] font proxy failed for ${filename}:`, err?.message || err); } catch (_) {}
+    return new Response(`font upstream unavailable`, { status: 502, headers: textHeaders(30) });
+  }
+}
+
+// Generic R2-backed asset proxy: serve from R2 on hit, lazy-fetch from
+// upstream + write-through to R2 on miss. Throws on upstream failure so
+// the caller can decide how to fall back. R2 misuse (binding missing,
+// get/put errors) degrades to a one-shot upstream fetch instead of
+// failing the whole request — the landing page still loads.
+async function assetProxy({ env, ctx, r2Key, upstreamUrl, contentType, immutable, disposition }) {
+  const bucket = env?.R2_ASSETS;
+  if (bucket) {
+    try {
+      const cached = await bucket.get(r2Key);
+      if (cached) {
+        return new Response(cached.body, {
+          status: 200,
+          headers: assetHeaders(contentType, immutable, disposition),
+        });
+      }
+    } catch (err) {
+      try { console.warn(`[LyricLens] R2 get failed for ${r2Key}:`, err?.message || err); } catch (_) {}
+    }
+  } else {
+    try { console.warn(`[LyricLens] R2_ASSETS not bound; serving ${r2Key} direct from upstream`); } catch (_) {}
+  }
+
+  const upstream = await fetch(upstreamUrl, {
+    headers: { "User-Agent": USER_AGENT, "Accept": "*/*" },
+    cf: { cacheTtl: 3600, cacheEverything: true },
+    redirect: "follow",
+  });
+  if (!upstream.ok) {
+    throw new Error(`upstream ${upstream.status} for ${upstreamUrl}`);
+  }
+  const buf = await upstream.arrayBuffer();
+  if (bucket) {
+    ctx.waitUntil(
+      bucket.put(r2Key, buf, { httpMetadata: { contentType } })
+        .catch((err) => {
+          try { console.warn(`[LyricLens] R2 put failed for ${r2Key}:`, err?.message || err); } catch (_) {}
+        })
+    );
+  }
+  return new Response(buf, {
+    status: 200,
+    headers: assetHeaders(contentType, immutable, disposition),
+  });
+}
+
+function assetHeaders(contentType, immutable, disposition) {
+  const headers = {
+    "content-type": contentType,
+    "cache-control": immutable
+      ? "public, max-age=31536000, immutable"
+      : "public, max-age=86400",
+    // Fonts and other cross-origin sub-resources need this when the consumer
+    // sets crossorigin on the <link> / @font-face request.
+    "access-control-allow-origin": "*",
+  };
+  if (disposition) headers["content-disposition"] = disposition;
+  return headers;
+}
+
 function jsonHeaders(maxAge) {
   return {
     "content-type": "application/json; charset=utf-8",
@@ -453,34 +664,49 @@ const LANDING_HTML = `<!doctype html>
 <meta name="theme-color" content="#E8ECF3" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0B1020" media="(prefers-color-scheme: dark)">
 <title>lyriclens · 灯と夜</title>
-<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-<link rel="preload" as="font" type="font/woff2" crossorigin href="https://cdn.jsdelivr.net/npm/geist@1/dist/fonts/geist-sans/Geist-Variable.woff2">
-<link rel="preload" as="font" type="font/woff2" crossorigin href="https://cdn.jsdelivr.net/npm/geist@1/dist/fonts/geist-mono/GeistMono-Variable.woff2">
+<meta name="description" content="把网易云每一句正在播放的歌词，变成一张外语学习卡片。词汇、语法、文化注释，跟着旋律一起停留。BetterNCM AI 歌词学习插件。">
+<meta name="author" content="@yoruuuchan">
+<link rel="canonical" href="https://lyriclens.yoru-and-akari.dev/">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="LyricLens">
+<meta property="og:title" content="LyricLens · 灯と夜">
+<meta property="og:description" content="把网易云每一句正在播放的歌词，变成一张外语学习卡片。词汇、语法、文化注释，跟着旋律一起停留。">
+<meta property="og:url" content="https://lyriclens.yoru-and-akari.dev/">
+<meta property="og:image" content="https://cdn.jsdelivr.net/gh/yoruuuchan/LyricLens@main/screenshots/lyric-ncm.png">
+<meta property="og:image:alt" content="LyricLens 在网易云客户端中跟随歌词显示学习卡片的截图">
+<meta property="og:locale" content="zh_CN">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="LyricLens · 灯と夜">
+<meta name="twitter:description" content="把网易云每一句正在播放的歌词，变成一张外语学习卡片。">
+<meta name="twitter:image" content="https://cdn.jsdelivr.net/gh/yoruuuchan/LyricLens@main/screenshots/lyric-ncm.png">
+<link rel="preload" as="font" type="font/woff2" crossorigin href="/assets/fonts/geist-sans.woff2">
+<link rel="preload" as="font" type="font/woff2" crossorigin href="/assets/fonts/geist-mono.woff2">
 <style>
-  /* font-display: block keeps text invisible until the font lands —
-     no fallback flash. Jsdelivr first, unpkg as backup origin. */
+  /* Fonts served from our R2 via the Worker's /assets/fonts/* proxy.
+     First request after a deploy lazy-fetches from jsdelivr and writes
+     through to R2; later requests are pure R2 reads. font-display: swap
+     keeps the page readable while the woff2 arrives. */
   @font-face {
     font-family: "Geist";
-    src: url("https://cdn.jsdelivr.net/npm/geist@1/dist/fonts/geist-sans/Geist-Variable.woff2") format("woff2-variations"),
-         url("https://unpkg.com/geist@1/dist/fonts/geist-sans/Geist-Variable.woff2") format("woff2-variations");
+    src: url("/assets/fonts/geist-sans.woff2") format("woff2-variations");
     font-weight: 100 900;
     font-style: normal;
-    font-display: block;
+    font-display: swap;
   }
   @font-face {
     font-family: "Geist Mono";
-    src: url("https://cdn.jsdelivr.net/npm/geist@1/dist/fonts/geist-mono/GeistMono-Variable.woff2") format("woff2-variations"),
-         url("https://unpkg.com/geist@1/dist/fonts/geist-mono/GeistMono-Variable.woff2") format("woff2-variations");
+    src: url("/assets/fonts/geist-mono.woff2") format("woff2-variations");
     font-weight: 100 900;
     font-style: normal;
-    font-display: block;
+    font-display: swap;
   }
   @font-face {
     font-family: "Zen Kaku Gothic New";
-    src: url("https://cdn.jsdelivr.net/npm/@fontsource/zen-kaku-gothic-new@5.0.13/files/zen-kaku-gothic-new-japanese-400-normal.woff2") format("woff2");
+    src: url("/assets/fonts/zen-kaku.woff2") format("woff2");
     font-weight: 400;
     font-style: normal;
-    font-display: block;
+    font-display: swap;
   }
 </style>
 <style>
@@ -604,6 +830,21 @@ const LANDING_HTML = `<!doctype html>
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
   }
+
+  /* Theme transition. Targeted properties so existing transitions on
+     .btn / .arrow / .theme-toggle keep their own timings. Disabled
+     under prefers-reduced-motion. */
+  @media (prefers-reduced-motion: no-preference) {
+    html, body, .group, .ep, .status-pill,
+    .endpoints-section, footer, .readme-content,
+    .readme-content blockquote, .readme-content pre, .readme-content code,
+    .preqs, .release-meta {
+      transition-property: background-color, color, border-color, box-shadow;
+      transition-duration: var(--dur-base);
+      transition-timing-function: var(--ease-out);
+    }
+  }
+
   body::before {
     content: "";
     position: fixed; inset: 0;
@@ -810,15 +1051,99 @@ const LANDING_HTML = `<!doctype html>
     box-shadow: var(--shadow-inset);
   }
 
-  /* Endpoints — matches the README's section style, no card wrap */
+  /* Version chip inside the download button — small, mono, slightly
+     dimmed against the primary fill so the verb stays the focal point. */
+  .btn-version {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    opacity: 0.85;
+    margin-left: 4px;
+  }
+  .btn-version:empty { display: none; }
+
+  /* Release timestamp under the action row, paired with version chip. */
+  .release-meta {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink-3);
+    letter-spacing: 0.04em;
+    margin: 14px 0 0;
+    min-height: 1.2em;
+  }
+  .release-meta:empty { display: none; }
+
+  /* "前置：需要先装 BetterNCM" hint under the action row. */
+  .preqs {
+    font-size: 13px;
+    color: var(--ink-3);
+    margin: 10px 0 0;
+  }
+  .preqs a {
+    color: var(--primary-500);
+    border-bottom: 1px solid var(--primary-300);
+    padding-bottom: 1px;
+  }
+  .preqs a:hover { color: var(--primary-600); }
+
+  /* Hero screenshots — lifted out of the README so the first scroll
+     shows the product, not the install steps. Grid + flex via the
+     same <p align="center"> CSS that the README content uses. */
+  .hero-screens {
+    margin-top: 48px;
+    margin-bottom: 24px;
+  }
+  .hero-screens p[align="center"] {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: flex-start;
+    margin: 0;
+  }
+  .hero-screens p[align="center"] > * {
+    flex: 1 1 320px;
+    min-width: 0;
+    line-height: 0;
+  }
+  .hero-screens img {
+    max-width: 100%;
+    height: auto;
+    width: 100%;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-pop);
+    display: block;
+  }
+  .hero-screens:empty { display: none; }
+
+  /* Endpoints — developer-facing, collapsed by default via <details>. */
   .endpoints-section { margin-top: 96px; }
+  .endpoints-section > summary {
+    cursor: pointer;
+    list-style: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 0;
+  }
+  .endpoints-section > summary::-webkit-details-marker { display: none; }
+  .endpoints-section > summary::after {
+    content: "";
+    width: 10px;
+    height: 10px;
+    border-right: 2px solid var(--ink-3);
+    border-bottom: 2px solid var(--ink-3);
+    transform: rotate(-45deg);
+    transition: transform var(--dur-base) var(--ease-out);
+  }
+  .endpoints-section[open] > summary::after { transform: rotate(45deg); }
+  .endpoints-section > .endpoints { margin-top: 24px; }
   .section-title {
     font-size: 40px;
     font-weight: 600;
     color: var(--ink-1);
     line-height: 1.2;
     letter-spacing: -0.022em;
-    margin: 0 0 24px;
+    margin: 0;
   }
   .section-title .jp {
     font-family: var(--font-jp);
@@ -1102,7 +1427,7 @@ const LANDING_HTML = `<!doctype html>
 </script>
 </head>
 <body>
-<button type="button" class="theme-toggle" aria-label="切换深色 / 浅色">
+<button type="button" class="theme-toggle" aria-label="切换主题">
   <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <circle cx="12" cy="12" r="4"></circle>
     <line x1="12" y1="2" x2="12" y2="5"></line>
@@ -1122,12 +1447,12 @@ const LANDING_HTML = `<!doctype html>
 <main>
   <section class="hero">
     <div class="eyebrow"><span class="dot"></span>plugin · betterncm</div>
-    <h1>lyriclens<span class="jp">歌詞のレンズ</span></h1>
+    <h1>lyriclens<span class="jp" lang="ja">歌詞のレンズ</span></h1>
     <p>把网易云每一句正在播放的歌词，变成一张外语学习卡片。词汇、语法、文化注释，跟着旋律一起停留。</p>
 
     <div class="actions">
       <a class="btn primary" href="/download">
-        <span>下载最新版</span>
+        <span>下载最新版 <span class="btn-version"><!--VERSION_TAG--></span></span>
         <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="5" y1="12" x2="19" y2="12"></line>
           <polyline points="12 5 19 12 12 19"></polyline>
@@ -1141,42 +1466,59 @@ const LANDING_HTML = `<!doctype html>
       </a>
     </div>
 
-    <div class="status-pill">
-      <span class="dot"></span>
-      <span>service</span>
-      <span class="mono">lyriclens.yoru-and-akari.dev</span>
+    <p class="release-meta"><!--VERSION_META--></p>
+
+    <p class="preqs">前置：需要先装 <a href="https://github.com/MicroCBer/BetterNCM" target="_blank" rel="noopener">BetterNCM</a>，再装本插件。</p>
+
+    <div class="status-pill" role="status" aria-label="服务运行中">
+      <span class="dot" aria-hidden="true"></span>
+      <span aria-hidden="true">service</span>
+      <span class="mono" aria-hidden="true">lyriclens.yoru-and-akari.dev</span>
     </div>
   </section>
+
+  <section class="hero-screens" aria-label="插件截图"><!--HERO_SCREENS--></section>
 
   <section class="readme">
     <article class="readme-content"><!--README_HTML--></article>
   </section>
 
-  <section class="endpoints-section">
-    <h2 class="section-title">endpoints <span class="jp">· 開発者向け</span></h2>
+  <details class="endpoints-section">
+    <summary class="section-title">endpoints <span class="jp" lang="ja">· 開発者向け</span></summary>
     <div class="endpoints">
       <div class="ep"><span class="verb">get</span><span class="path">/download</span><span class="note">302 → github release</span></div>
       <div class="ep"><span class="verb">get</span><span class="path">/latest.json</span><span class="note">version · changelog · size · digest</span></div>
       <div class="ep"><span class="verb">get</span><span class="path">/changelog</span><span class="note">text · markdown</span></div>
       <div class="ep"><span class="verb">get</span><span class="path">/healthz</span><span class="note">ok</span></div>
     </div>
-  </section>
+  </details>
 
   <footer>
     <span>maintained by <a href="https://github.com/yoruuuchan" target="_blank" rel="noopener">@yoruuuchan</a></span>
+    <span class="sep">·</span>
+    <a href="https://github.com/yoruuuchan/LyricLens/issues" target="_blank" rel="noopener">反馈 / issues</a>
+    <span class="sep">·</span>
+    <a href="https://github.com/yoruuuchan/LyricLens/blob/main/README.md" target="_blank" rel="noopener">完整 readme</a>
   </footer>
 </main>
 <script>
-  // Click handler — toggles data-theme between akari and yoru,
-  // and persists the choice so future loads skip the OS-pref check.
+  // Click handler — toggles data-theme between akari and yoru, persists
+  // the choice, and keeps the toggle button's aria-label in sync with
+  // what action it will perform next.
   (function() {
     var btn = document.querySelector(".theme-toggle");
     if (!btn) return;
+    function syncLabel() {
+      var current = document.documentElement.dataset.theme;
+      btn.setAttribute("aria-label", current === "yoru" ? "切换到浅色主题" : "切换到深色主题");
+    }
+    syncLabel();
     btn.addEventListener("click", function() {
       var root = document.documentElement;
       var next = root.dataset.theme === "akari" ? "yoru" : "akari";
       root.dataset.theme = next;
       try { localStorage.setItem("lyriclens-theme", next); } catch (_) {}
+      syncLabel();
     });
   })();
 </script>
