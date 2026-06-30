@@ -951,17 +951,19 @@ const LANDING_HTML = `<!doctype html>
     font-size: 21px;
     line-height: 1.6;
     color: var(--ink-2);
-    margin: 0 0 36px;
+    margin: 0;
     max-width: 620px;
-    /* balance is more aggressive than pretty — pretty mostly fixes
-       orphans/widows on the LAST line, balance equalizes ALL line
-       lengths. Two-line hero copy wants balance so "词汇、" doesn't
-       hang at the end of line 1 with line 2 mostly empty. The pretty
-       line is a fallback for engines that don't recognize balance yet
-       (cascade keeps the last understood value). */
-    text-wrap: pretty;
-    text-wrap: balance;
+    /* No text-wrap rule — earlier attempts with 'pretty' and 'balance'
+       both misfired on CJK copy (balance forced "学习"/"卡片" apart
+       trying to equalize line length). The hero copy is now split into
+       two <p>'s at the natural semantic seam (period between the two
+       clauses), so each paragraph fits on its own line at 620px / 21px
+       without any wrap algorithm. */
   }
+  /* Compact gap between the two hero paragraphs (they are one thought,
+     not two sections), then a generous gap before the action row. */
+  .hero p + p { margin-top: 6px; }
+  .hero p:last-of-type { margin-bottom: 36px; }
 
   /* Actions */
   .actions {
@@ -1081,14 +1083,14 @@ const LANDING_HTML = `<!doctype html>
   .btn-version:empty { display: none; }
 
   /* Release timestamp under the action row, paired with version chip.
-     Margin nudged up so the 12px line doesn't crowd the 48px button
-     row above it — overall hero rhythm now reads 36 → 22 → 16 → 28. */
+     22px still read as crowded against the 48px button row — bumped
+     to 28px so the mono line breathes. Hero rhythm now: 36 → 28 → 16 → 28. */
   .release-meta {
     font-family: var(--font-mono);
     font-size: 12px;
     color: var(--ink-3);
     letter-spacing: 0.04em;
-    margin: 22px 0 0;
+    margin: 28px 0 0;
     min-height: 1.2em;
   }
   .release-meta:empty { display: none; }
@@ -1469,7 +1471,8 @@ const LANDING_HTML = `<!doctype html>
   <section class="hero">
     <div class="eyebrow"><span class="dot"></span>plugin · betterncm</div>
     <h1>lyriclens<span class="jp" lang="ja">歌詞のレンズ</span></h1>
-    <p>把网易云每一句正在播放的歌词，变成一张外语学习卡片。词汇、语法、文化注释，跟着旋律一起停留。</p>
+    <p>把网易云每一句正在播放的歌词，变成一张外语学习卡片。</p>
+    <p>词汇、语法、文化注释，跟着旋律一起停留。</p>
 
     <div class="actions">
       <a class="btn primary" href="/download">
