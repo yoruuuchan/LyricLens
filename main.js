@@ -1601,18 +1601,19 @@
     diagnostics?.updateState?.({ language, lyricsSource: lyricResult.source });
 
     // ── Stale-capture rescue via NCM API ──
-    // language="other" with a real numeric songId is suspicious: AMLL's
-    // React state can hold the previous song's lyrics when NCM's
-    // PlayState/PlayProgress events are dead, so the capture pipeline
-    // happily pulls Chinese lyrics while NCM actually plays Japanese.
-    // Ask NCM's own backend; if THAT returns en/ja content, trust it
-    // and replace lyricResult/lines/language wholesale.
+    // language="zh" (Chinese / native) with a real numeric songId is
+    // suspicious: AMLL's React state can hold the previous song's
+    // lyrics when NCM's PlayState/PlayProgress events are dead, so the
+    // capture pipeline happily pulls Chinese lyrics while NCM actually
+    // plays Japanese. Ask NCM's own backend; if THAT returns
+    // non-native content, trust it and replace lyricResult/lines/
+    // language wholesale.
     //
     // Skipped when:
     //   - the capture source already IS the NCM API (would re-fetch the
     //     same thing and likely get the same result)
     //   - no normalizable songId is available
-    if (language === "other"
+    if (language === "zh"
         && lyricResult.source !== "ncm-lyric-api"
         && !String(lyricResult.source || "").endsWith("other-lang-rescue")) {
       const ncmSongId = Sync.normalizeSongId?.(songId);
@@ -1691,8 +1692,8 @@
       }
     }
 
-    if (language === "other") {
-      diagnostics?.updateState?.({ apiStatus: "skipped-other-language", analysisSkippedReason: "language-other", analyzeTriggerBlockedReason: "language-other" });
+    if (language === "zh" || language === "other") {
+      diagnostics?.updateState?.({ apiStatus: "skipped-native-language", analysisSkippedReason: `language-${language}`, analyzeTriggerBlockedReason: `language-${language}` });
       panel?.hide();
       return;
     }
@@ -2519,6 +2520,7 @@
         responseFormatMode: settings.responseFormatMode,
         isFallback,
         cardGenerationMode,
+        settings,
         signal: batchController.signal,
         onStreamCard: cardGenerationMode === "per-line" ? handleStreamCard : undefined
       });

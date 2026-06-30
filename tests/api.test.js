@@ -43,6 +43,41 @@ test("default prompt requires one card for every input lyric line", () => {
   assert.doesNotMatch(systemPrompt, /Pick 6-8/);
 });
 
+test("system prompt advertises the typed point schema and the checked focus areas", () => {
+  const body = buildChatRequestBody({
+    modelName: "test-model",
+    language: "en",
+    formattedLyrics: "[0] Hello",
+    settings: {
+      targetLanguage: "中文",
+      knowledgePoints: ["vocabulary", "tone"],
+      customPrompt: ""
+    }
+  });
+  const prompt = body.messages[0].content;
+  assert.match(prompt, /"type":"vocabulary"/);
+  assert.match(prompt, /vocabulary, tone/);
+  assert.doesNotMatch(prompt, /type "grammar"/);
+  assert.doesNotMatch(prompt, /type "culture"/);
+});
+
+test("custom prompt fully replaces the focus block while keeping the locked frame", () => {
+  const body = buildChatRequestBody({
+    modelName: "test-model",
+    language: "en",
+    formattedLyrics: "[0] Hello",
+    settings: {
+      targetLanguage: "中文",
+      knowledgePoints: ["vocabulary"],
+      customPrompt: "ONLY focus on rhyme and meter."
+    }
+  });
+  const prompt = body.messages[0].content;
+  assert.match(prompt, /ONLY focus on rhyme and meter\./);
+  assert.match(prompt, /No markdown\. No code block/);
+  assert.doesNotMatch(prompt, /Focus areas/);
+});
+
 test("selected prompt keeps sparse card behavior when explicitly requested", () => {
   const body = buildChatRequestBody({
     modelName: "test-model",
@@ -212,6 +247,37 @@ test("testConnection does not leak the API key into the returned message", async
   });
   assert.ok(!result.message.includes(sensitiveKey));
   assert.ok(!String(result.rawError || "").includes(sensitiveKey));
+});
+
+test("normalizePoints handles typed objects, legacy strings, and legacy phrase/meaning shapes", () => {
+  const lines = [{ index: 0, text: "Hello world", startTime: 1000 }];
+  const cards = normalizeCards({
+    cards: [{
+      index: 0,
+      line: "Hello world",
+      translation: "你好世界",
+      points: [
+        { type: "vocabulary", text: "hello → 问候用语" },
+        { type: "GRAMMAR", text: "  trim me  " },
+        { type: "unknown-type", text: "should fall back to general" },
+        "legacy string point",
+        { phrase: "world", meaning: "世界" },
+        { type: "tone", text: "" },
+        null,
+        "   ",
+        { text: "  " }
+      ]
+    }]
+  }, lines);
+  assert.equal(cards.length, 1);
+  const points = cards[0].highlights;
+  assert.deepEqual(points, [
+    { type: "vocabulary", text: "hello → 问候用语" },
+    { type: "grammar", text: "trim me" },
+    { type: "general", text: "should fall back to general" },
+    { type: "general", text: "legacy string point" },
+    { type: "general", text: "world：世界" }
+  ]);
 });
 
 test("normalizes cards by dropping missing or out-of-range indexes", () => {

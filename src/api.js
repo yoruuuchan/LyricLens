@@ -1,7 +1,10 @@
 (function initLyricLensApi(root) {
   "use strict";
 
-  const PROMPT_VERSION = "v2";
+  // v3: point shape changed from string[] to {type, text}[]; old cached
+  // cards still render via the legacy renderer branch but show no type
+  // badges. Bumping the version forces re-analysis with the new prompt.
+  const PROMPT_VERSION = "v3";
   const ANALYSIS_REQUEST_TIMEOUT_FALLBACK_MS = 60000;
   const TEST_CONNECTION_TIMEOUT_MS = 12000;
 
@@ -20,89 +23,126 @@
     } catch (_) {}
   }
 
-  const SYSTEM_PROMPTS = {
-    en: `You are an English learning assistant. The user provides timed song lyrics. Generate one learning card for every input lyric line.
+  // ── Prompt composition ──────────────────────────────────────────
+  //
+  // The prompt is built from three layers:
+  //   1. FRAME (locked) — JSON schema, structural constraints
+  //   2. FOCUS (editable) — learning emphasis, generated from knowledge
+  //      point checkboxes or fully replaced by a user custom prompt
+  //   3. SUFFIX (locked) — "no markdown" guard
+  //
+  // Users can edit the FOCUS layer via settings. The FRAME and SUFFIX
+  // are always injected by code, so even a broken custom prompt can't
+  // make the model forget the output schema.
+
+  const LANGUAGE_NAMES = {
+    en: "English", ja: "Japanese", ko: "Korean", fr: "French",
+    es: "Spanish", de: "German", pt: "Portuguese", it: "Italian",
+    ru: "Russian", th: "Thai", vi: "Vietnamese", ar: "Arabic"
+  };
+
+  const KNOWLEDGE_POINT_SNIPPETS = {
+    vocabulary: "Vocabulary: highlight important words, phrases, and collocations; explain meaning and usage.",
+    grammar: "Grammar: explain sentence structures, verb conjugations, tense, and grammatical patterns.",
+    culture: "Cultural context: explain idioms, cultural references, allusions, and background.",
+    pronunciation: "Pronunciation: note phonetic features, stress, liaison, pitch accent, or common pitfalls.",
+    tone: "Tone & feeling: describe emotional nuance, register, and rhetorical effect."
+  };
+
+  const VALID_POINT_TYPES = ["vocabulary", "grammar", "culture", "pronunciation", "tone", "general"];
+
+  function languageDisplayName(code) {
+    return LANGUAGE_NAMES[code] || code;
+  }
+
+  function buildFramePrefix(language, isSelected) {
+    const langName = languageDisplayName(language);
+    if (isSelected) {
+      return `You are a ${langName} learning assistant. The user provides song lyrics with line numbers in [index] text format.
+
+Pick 6-8 most valuable lines to learn from. Return ONLY a JSON object — no markdown, no code fences, no explanations.
+
+Shape: {"cards":[{"lineIndex":0,"original":"...","translation":"...","points":[{"type":"vocabulary","text":"..."}],"note":"..."}]}
+
+Structural rules:
+- lineIndex: the original line number.
+- original: exact lyric line, don't rewrite.
+- startMs/endMs should be copied from input when present.
+- Each point MUST be an object with "type" and "text" fields. Valid types: vocabulary, grammar, culture, pronunciation, tone.
+- If fewer than 6 lines have learning value, return fewer cards — never pad.`;
+    }
+    return `You are a ${langName} learning assistant. The user provides timed song lyrics. Generate one learning card for every input lyric line.
 
 Return ONLY a JSON object — no markdown, no code fences, no explanations.
 
 Required shape:
-{"cards":[{"lineIndex":0,"startMs":1234,"endMs":5678,"original":"...","translation":"...","points":["..."],"note":"..."}]}
+{"cards":[{"lineIndex":0,"startMs":1234,"endMs":5678,"original":"...","translation":"...","points":[{"type":"vocabulary","text":"..."}],"note":"..."}]}
 
-Rules:
+Structural rules:
 - cards.length must equal input lines.length.
-- Do not skip simple lines. If there is no grammar or vocabulary worth teaching, points can be [] and note should briefly explain tone, feeling, or meaning.
+- Each point MUST be an object with "type" and "text" fields. Valid types: vocabulary, grammar, culture, pronunciation, tone.
+- Do not skip simple lines. If there is nothing worth teaching, points can be [] and note should briefly explain tone or meaning.
 - lineIndex must exactly match the input line index.
 - startMs/endMs should be copied from input when present.
-- original must be the exact original lyric, do not rewrite.
-- translation must be natural Chinese.
-- points: at most 1-2 items, each ≤50 Chinese characters. Avoid filler.
-- note: ≤100 Chinese characters.
-- If a referenceTranslation is provided, use it only as reference; do not mechanically copy it.
-- No markdown. No code block. No text outside the JSON.`,
+- original must be the exact original lyric, do not rewrite.`;
+  }
 
-    ja: `You are a Japanese learning assistant. The user provides timed Japanese song lyrics. Generate one learning card for every input lyric line.
+  const FRAME_SUFFIX = "No markdown. No code block. No text outside the JSON.";
 
-Return ONLY a JSON object — no markdown, no code fences, no explanations.
-
-Required shape:
-{"cards":[{"lineIndex":0,"startMs":1234,"endMs":5678,"original":"...","translation":"...","points":["..."],"note":"..."}]}
-
-Rules:
-- cards.length must equal input lines.length.
-- Do not skip simple lines. If there is no vocabulary, grammar, or expression worth teaching, points can be [] and note should briefly explain tone, feeling, or meaning.
-- lineIndex must exactly match the input line index.
-- startMs/endMs should be copied from input when present.
-- original must be the exact original lyric, do not rewrite.
-- translation must be natural Chinese.
-- points: at most 1-2 items, each ≤50 Chinese characters. Prefer useful words, grammar, expressions, or nuance. Avoid filler.
-- note: ≤100 Chinese characters.
+  function buildDefaultFocus(targetLanguage, knowledgePoints, isSelected) {
+    const points = Array.isArray(knowledgePoints) ? knowledgePoints : [];
+    const focusLines = points
+      .filter((k) => KNOWLEDGE_POINT_SNIPPETS[k])
+      .map((k) => `- type "${k}" — ${KNOWLEDGE_POINT_SNIPPETS[k]}`);
+    const typeList = points.filter((k) => KNOWLEDGE_POINT_SNIPPETS[k]);
+    const allowedTypes = typeList.length > 0 ? typeList.join(", ") : "vocabulary, grammar, culture, pronunciation, tone";
+    const focusBlock = focusLines.length > 0
+      ? `Focus areas (produce AT MOST one point per area, skip the area entirely if there is nothing valuable to say about it for that line):\n${focusLines.join("\n")}`
+      : "";
+    if (isSelected) {
+      return `Content rules:
+- translation: short ${targetLanguage} translation, one sentence.
+- points: array of {"type", "text"} objects. Only use these types: ${allowedTypes}.
+- text: ≤24 ${targetLanguage} characters. Avoid filler.
+- note: cultural or usage note, ≤60 ${targetLanguage} characters. Can be empty string.
 - If referenceTranslation or romanLyric is provided, use it only as reference.
-- No markdown. No code block. No text outside the JSON.`
-  };
+${focusBlock}`;
+    }
+    return `Content rules:
+- translation must be natural ${targetLanguage}.
+- points: array of {"type", "text"} objects. Only use these types: ${allowedTypes}.
+- text: ≤50 ${targetLanguage} characters per point. Avoid filler.
+- note: ≤100 ${targetLanguage} characters. Use for general feeling/meaning that doesn't fit a specific type.
+- If referenceTranslation or romanLyric is provided, use it only as reference.
+${focusBlock}`;
+  }
 
-  const SELECTED_PROMPTS = {
-    en: `You are an English learning assistant. The user provides song lyrics with line numbers in [index] text format.
+  function buildFallbackPrompt(language, isSelected) {
+    const langName = languageDisplayName(language);
+    if (isSelected) {
+      return `Pick 2-4 most valuable ${langName} lyric lines. Return ONLY a JSON object: {"cards":[{"lineIndex":0,"original":"...","translation":"...","points":["..."],"note":""}]}. Each field must be short. No markdown. No code blocks. No explanations. If unsure, return fewer cards.`;
+    }
+    return `Generate one short card for every input ${langName} lyric line. Return ONLY JSON: {"cards":[{"lineIndex":0,"startMs":0,"endMs":0,"original":"...","translation":"...","points":[],"note":"..."}]}. cards.length must equal input lines.length. points max 1 item. No markdown.`;
+  }
 
-Pick 6-8 most valuable lines to learn from. Return ONLY a JSON object — no markdown, no code fences, no explanations.
+  function composeSystemPrompt(language, isFallback, cardGenerationMode, settings) {
+    const targetLanguage = settings?.targetLanguage || "中文";
+    const knowledgePoints = settings?.knowledgePoints;
+    const customPrompt = settings?.customPrompt || "";
+    const isSelected = normalizeCardGenerationMode(cardGenerationMode) === "selected";
 
-Shape: {"cards":[{"lineIndex":0,"original":"...","translation":"...","points":["...","..."],"note":"..."}]}
+    if (isFallback) return buildFallbackPrompt(language, isSelected);
 
-Rules:
-- lineIndex: the original line number.
-- original: exact lyric line, don't rewrite.
-- translation: short Chinese translation, one sentence.
-- points: at most 2 learning points, each ≤24 Chinese characters.
-- note: cultural or usage note, ≤60 Chinese characters. Can be empty string.
-- If fewer than 6 lines have learning value, return fewer cards — never pad.
-- No markdown. No code block. No explanatory text outside the JSON.`,
+    const frame = buildFramePrefix(language, isSelected);
+    const focus = customPrompt.trim() || buildDefaultFocus(targetLanguage, knowledgePoints, isSelected);
+    return `${frame}\n\n${focus}\n\n${FRAME_SUFFIX}`;
+  }
 
-    ja: `You are a Japanese learning assistant. The user provides song lyrics with line numbers in [index] text format.
-
-Pick 6-8 most valuable lines to learn from. Return ONLY a JSON object — no markdown, no code fences, no explanations.
-
-Shape: {"cards":[{"lineIndex":0,"original":"...","translation":"...","points":["...","..."],"note":"..."}]}
-
-Rules:
-- lineIndex: the original line number.
-- original: exact lyric line, don't rewrite.
-- translation: short Chinese translation, one sentence.
-- points: at most 2 learning points (word/grammar/expression), each ≤24 Chinese characters.
-- note: cultural or usage note, ≤60 Chinese characters. Can be empty string.
-- If fewer than 6 lines have learning value, return fewer cards — never pad.
-- No markdown. No code block. No explanatory text outside the JSON.`
-  };
-
-  const FALLBACK_PROMPTS = {
-    en: `Generate one short card for every input English lyric line. Return ONLY JSON: {"cards":[{"lineIndex":0,"startMs":0,"endMs":0,"original":"...","translation":"...","points":[],"note":"..."}]}. cards.length must equal input lines.length. points max 1 item. No markdown.`,
-
-    ja: `Generate one short card for every input Japanese lyric line. Return ONLY JSON: {"cards":[{"lineIndex":0,"startMs":0,"endMs":0,"original":"...","translation":"...","points":[],"note":"..."}]}. cards.length must equal input lines.length. points max 1 item. No markdown.`
-  };
-
-  const SELECTED_FALLBACK_PROMPTS = {
-    en: `Pick 2-4 most valuable English lyric lines. Return ONLY a JSON object: {"cards":[{"lineIndex":0,"original":"...","translation":"...","points":["..."],"note":""}]}. Each field must be short. No markdown. No code blocks. No explanations. If unsure, return fewer cards.`,
-
-    ja: `Pick 2-4 most valuable Japanese lyric lines. Return ONLY a JSON object: {"cards":[{"lineIndex":0,"original":"...","translation":"...","points":["..."],"note":""}]}. Each field must be short. No markdown. No code blocks. No explanations. If unsure, return fewer cards.`
-  };
+  // Keep old names as thin wrappers for any external callers
+  const SYSTEM_PROMPTS = { en: null, ja: null };
+  const SELECTED_PROMPTS = { en: null, ja: null };
+  const FALLBACK_PROMPTS = { en: null, ja: null };
+  const SELECTED_FALLBACK_PROMPTS = { en: null, ja: null };
 
   class TimeoutError extends Error {
     constructor(message = "请求超时") {
@@ -147,22 +187,16 @@ Rules:
     return mode === "selected" ? "selected" : "per-line";
   }
 
-  function getSystemPrompt(language, isFallback, cardGenerationMode) {
-    const mode = normalizeCardGenerationMode(cardGenerationMode);
-    if (mode === "selected") {
-      if (isFallback && SELECTED_FALLBACK_PROMPTS[language]) return SELECTED_FALLBACK_PROMPTS[language];
-      return SELECTED_PROMPTS[language] || SELECTED_PROMPTS.en;
-    }
-    if (isFallback && FALLBACK_PROMPTS[language]) return FALLBACK_PROMPTS[language];
-    return SYSTEM_PROMPTS[language] || SYSTEM_PROMPTS.en;
+  function getSystemPrompt(language, isFallback, cardGenerationMode, settings) {
+    return composeSystemPrompt(language, isFallback, cardGenerationMode, settings);
   }
 
-  function buildChatRequestBody({ modelName, language, formattedLyrics, maxTokens, temperature, thinkingMode, responseFormatMode, isFallback, cardGenerationMode }) {
+  function buildChatRequestBody({ modelName, language, formattedLyrics, maxTokens, temperature, thinkingMode, responseFormatMode, isFallback, cardGenerationMode, settings }) {
     const generationMode = normalizeCardGenerationMode(cardGenerationMode);
     const body = {
       model: modelName,
       messages: [
-        { role: "system", content: getSystemPrompt(language, isFallback, generationMode) },
+        { role: "system", content: getSystemPrompt(language, isFallback, generationMode, settings) },
         { role: "user", content: formattedLyrics }
       ],
       temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : 0.3
@@ -204,7 +238,34 @@ Rules:
 
   function normalizePoints(value) {
     if (!Array.isArray(value)) return [];
-    return value.filter((item) => typeof item === "string" && item.trim()).map((item) => String(item).slice(0, 200));
+    const result = [];
+    for (const item of value) {
+      // Legacy: plain string from old cards / older prompts → general type
+      if (typeof item === "string") {
+        const text = item.trim();
+        if (text) result.push({ type: "general", text: text.slice(0, 200) });
+        continue;
+      }
+      if (!item || typeof item !== "object") continue;
+      // New typed shape: {type, text}
+      const rawText = String(item.text ?? item.point ?? "").trim();
+      if (!rawText) {
+        // Legacy {phrase, meaning} shape (from very early prompt iterations).
+        // Compose "phrase：meaning" so the renderer can still split it.
+        const phrase = String(item.phrase ?? "").trim();
+        const meaning = String(item.meaning ?? "").trim();
+        if (phrase && meaning) {
+          result.push({ type: "general", text: `${phrase}：${meaning}`.slice(0, 200) });
+        } else if (meaning) {
+          result.push({ type: "general", text: meaning.slice(0, 200) });
+        }
+        continue;
+      }
+      const rawType = String(item.type ?? "").toLowerCase();
+      const type = VALID_POINT_TYPES.includes(rawType) ? rawType : "general";
+      result.push({ type, text: rawText.slice(0, 200) });
+    }
+    return result;
   }
 
   function rawContentSample(content) {
@@ -551,6 +612,7 @@ Rules:
     responseFormatMode,
     isFallback,
     cardGenerationMode,
+    settings,
     signal,
     fetchImpl,
     timeoutMs = ANALYSIS_REQUEST_TIMEOUT_FALLBACK_MS,
@@ -638,7 +700,7 @@ Rules:
       const rfMode = rfModeOverride !== undefined ? rfModeOverride : currentRfMode;
       const built = buildChatRequestBody({
         modelName, language, formattedLyrics, maxTokens, temperature,
-        thinkingMode, responseFormatMode: rfMode, isFallback, cardGenerationMode
+        thinkingMode, responseFormatMode: rfMode, isFallback, cardGenerationMode, settings
       });
       if (wantStreaming) {
         built.stream = true;
@@ -1173,7 +1235,11 @@ Rules:
     testConnection,
     testAnalyzeSpeed,
     createCardsStreamParser,
-    consumeSseStream
+    consumeSseStream,
+    composeSystemPrompt,
+    buildDefaultFocus,
+    KNOWLEDGE_POINT_SNIPPETS,
+    LANGUAGE_NAMES
   };
 
   root.LyricLens = root.LyricLens || {};

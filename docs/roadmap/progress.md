@@ -13,6 +13,43 @@ tag 含义：`[plan]` 路线决策 / `[probe]` probe 结果 / `[ship]` 产品功
 
 ---
 
+## 2026-06-30 [ship] Task #4 扩展 — typed learning points 上线
+
+承接 Codex 提交的 PR #4，真机验收时发现：知识点勾选只是给 LLM 改 prompt 提示，**卡片渲染并不反映勾选**——比如截图里"It's only love"那种简单句，points 一直显示 fallback "这一句以语气和情绪表达为主"，"学习点"也分不出是哪一类。
+
+跟 Yoru 对齐方案 A 后做了一轮 schema 重构：
+
+- `points` 从 `string[]` → `[{type, text}]`，type ∈ {vocabulary, grammar, culture, pronunciation, tone, general}
+- prompt 让 LLM 每个勾选的 focus area 最多出一条（没东西讲就跳过），并明确允许的 type 列表
+- card.js 渲染每条 point 前带类别徽章（"词汇/语法/文化背景/发音/语感"）
+- 空 highlights 时整个"学习点"区域消失，删掉硬塞的"语气和情绪"误导文案
+- normalizePoints 兼容三种输入：新 typed object、旧字符串、旧 `{phrase, meaning}`
+- **`PROMPT_VERSION` 从 v2 → v3**，让持久化 cache 全部失效，避免旧字符串格式继续命中
+- 新增测试：normalizePoints 三种输入、prompt 出现 typed schema、custom prompt 替换 focus 保留 frame、card 渲染带徽章、空 highlights 整段隐藏
+- 测试 331 → 336 pass
+
+commit 是 `71090d6 Type-tag learning points and surface focus areas in cards`，已推到 `feat/custom-prompt-multi-lang`，PR head 跟着更新。
+
+部署：
+- 备份：`LyricLens.plugin.bak-pre-typed-points-20260630-143217`、`LyricLens.plugin.bak-pre-prompt-v3-20260630-143802`
+- 已部署到 NCM 并重启验证，Yoru 反馈"看起来没问题"
+
+下一步：PR #4 标 ready / merge → 进路线图阶段 4（Tauri MVP 或 lifecycle leaks 二选一）
+
+## 2026-06-30 [ship] Task #4 自定义 prompt + 多语言支持进 PR #4
+
+Codex 接上 `HANDOFF-2026-06-30-session2.md` 后，把 Task #4 的 UI、测试、build、部署和 PR 都收到了可验收状态。
+
+要点：
+- `feat/custom-prompt-multi-lang` 已 push，PR #4 处于 draft，PR head 是 `68fa5cd`
+- 设置面板 AI 服务 tab 已有学习偏好、目标语言、知识点勾选、自定义 Prompt 高级折叠区、恢复默认
+- 真机反馈的两个问题已修：自定义 Prompt 展开会自动合上/跳顶、`中文` 显示成 `ä¸­æ`
+- 验证：`npm test` 331 pass，`npm run build` 成功
+- 本次 `.plugin` 已部署到 `D:\CloudMusic\betterncm\plugins\LyricLens.plugin`，覆盖前备份是 `LyricLens.plugin.bak-prompt-scroll-encoding-20260630-140058`
+- 未跟踪文件 `LyricLens_D_E_research_raw_urls.md` 和 `probes/lrclib-benchmark/` 仍不属于 PR
+
+下一步：Yoru 启动/重启 NCM 做最终真机验收；没问题就把 PR #4 从 draft 收口/merge。
+
 ## 2026-06-30 [note] 换 session 交接 — #2 卡在 UI 验证最后一步
 
 Yoru 额度快没了切窗口。详情看 **`HANDOFF-2026-06-30.md`**。
