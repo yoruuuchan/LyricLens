@@ -717,7 +717,12 @@ const LANDING_HTML = `<!doctype html>
 <style>
   :root {
     --font-ui: "Geist", "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-    --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    /* CJK fallback appended so mono runs (release-meta, code, .ep paths)
+       don't drop CJK glyphs into Windows' generic 'monospace' slot,
+       which resolves to SimSun/宋体 and clashes with the YaHei used by
+       sans runs. Cost: CJK in mono blocks loses tabular alignment, but
+       it never had it to begin with (Geist Mono has no CJK). */
+    --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "PingFang SC", "Microsoft YaHei", monospace;
     --font-jp: "Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", system-ui, sans-serif;
 
     --radius-sm: 9px;
@@ -948,6 +953,11 @@ const LANDING_HTML = `<!doctype html>
     color: var(--ink-2);
     margin: 0 0 36px;
     max-width: 620px;
+    /* Let the browser pick a more balanced break point so lines don't
+       end up wildly uneven (e.g. first line ~29 CJK chars, second ~12).
+       Chrome 117+ / Safari 17.4+. Older browsers fall back to default
+       greedy wrapping — no breakage. */
+    text-wrap: pretty;
   }
 
   /* Actions */
