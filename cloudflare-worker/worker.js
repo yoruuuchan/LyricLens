@@ -686,17 +686,22 @@ const LANDING_HTML = `<!doctype html>
   /* Fonts served from our R2 via the Worker's /assets/fonts/* proxy.
      First request after a deploy lazy-fetches from jsdelivr and writes
      through to R2; later requests are pure R2 reads. font-display: swap
-     keeps the page readable while the woff2 arrives. */
+     keeps the page readable while the woff2 arrives.
+
+     Note: plain format("woff2") — the older format("woff2-variations")
+     keyword is deprecated and some Chromium builds reject the whole src
+     when they see it, leaving the @font-face silently dead. Variable
+     glyphs still work fine inside a plain woff2 declaration. */
   @font-face {
     font-family: "Geist";
-    src: url("/assets/fonts/geist-sans.woff2") format("woff2-variations");
+    src: url("/assets/fonts/geist-sans.woff2") format("woff2");
     font-weight: 100 900;
     font-style: normal;
     font-display: swap;
   }
   @font-face {
     font-family: "Geist Mono";
-    src: url("/assets/fonts/geist-mono.woff2") format("woff2-variations");
+    src: url("/assets/fonts/geist-mono.woff2") format("woff2");
     font-weight: 100 900;
     font-style: normal;
     font-display: swap;
