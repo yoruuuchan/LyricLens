@@ -13,6 +13,32 @@ tag 含义：`[plan]` 路线决策 / `[probe]` probe 结果 / `[ship]` 产品功
 
 ---
 
+## 2026-06-30 [ship] 桌面版 per-line 分批 + pause-follow + 顺手修 LyricLine bug
+
+承接 session 5 的 timeline health probe 工作，把 HANDOFF 排序的 🥈 per-line 分批 和🥉 README 改完之后，加做了一个计划外的 pause-follow。一晚 4 个桌面版 PR + 1 个主仓库 docs PR。
+
+**per-line 分批（PR [#6](https://github.com/yoruuuchan/lyriclens-desktop/pull/6)，`20ba5cc`）**：
+- `cardGenerationMode: "per-line"` 在长曲（≥30 行）上以前必触发 4096 max_tokens 截断 → fallback 走 selected (6-8 张精选)，per-line 实际从来没工作过
+- 加 `PER_LINE_BATCH_SIZE = 25`，per-line + lines > 25 时分批并发请求 LLM，按 lineIndex 合并；selected 模式不动
+- 真机：Brave Shine · Aimer（47 行）从 6-8 张 fallback 变成 46 张完整逐行；差 1 张是 LLM 偶尔漏间奏 `♪` 行，可接受
+- **暴露并修了 2 个 side bug**：
+  - `src-tauri/src/lrclib.rs` 的 `LyricLine` 漏 `serde(rename_all = "camelCase")`，前端读 `line.timeMs` 一直是 undefined，activeIdx 永远 -1。这个 bug 一直存在但被 expandAll fallback 掩盖了多个 PR，PR #4 让 healthy 成为常态后立刻暴露
+  - `scrollIntoView` 锚卡片不锚行，卡片居中、active 行紧贴上方，视觉对称
+
+**pause-follow（PR [#7](https://github.com/yoruuuchan/lyriclens-desktop/pull/7)，`0852d21`）**：
+- 底栏加"暂停跟随"按钮（▶ 图标 + warning-500 橙色）
+- `state.followPaused` + `state.frozenActiveIdx` 冻结当前视图，now-playing 条仍显示真实位置；切歌 / no_session 自动 resume
+- 顶部状态条 "已暂停跟随 · 点底部恢复跟随回到当前播放位置"
+- 复刻插件版同名能力，UX 跟齐
+
+**HANDOFF-2026-06-30-session5.md 已落地**，包含本 session 全部增量 + 一个 in-flight bug：
+
+⚠️ **桌面版没有 analysis cache**——同一首歌切回来重新跑 LLM 分析，浪费时间 + token。插件版有，桌面版需要补。阶段 3 第 0 步先做这个，不然开发体验会持续受损。建议方案 / 入口详见 session5 HANDOFF。
+
+下一步：
+- 阶段 3 主菜，从 analysis cache 暖手开始：cache → `NotebookEntry` SQLite + tauri-plugin-sql → star + 备注 sheet → Anki CSV 导出 → JSON import/export
+- 词库基建（Bluskyo + Cloudflare KV）可与阶段 3 并行
+
 ## 2026-06-30 [ship] 桌面版 timeline health probe + debug 面板上线
 
 承接 SMTC timeline 调研报告 §7.3，桌面版把"有没有 timeline"的粗糙 boolean (`durationMs > 0`) 换成 6 档状态机：`unknown` / `metadata_only` / `timeline_candidate` / `timeline_healthy` / `timeline_unstable` / `timeline_dead`。逐行同步只在 healthy / candidate 下生效；metadata_only / dead 自动铺开全部学习卡片；unstable 仍按行 + 警告条。
