@@ -159,3 +159,18 @@ npm test
 ```
 
 The test suite covers pure-logic modules: language detection, lyric preprocessing, cache keys, tolerant LLM JSON parsing, and playback-time sync.
+
+## License
+
+LyricLens is released under the [GNU Affero General Public License v3.0 or later](LICENSE) (AGPL-3.0-or-later).
+
+In plain English:
+- You may use, modify, and redistribute LyricLens freely.
+- Any fork **or any network-accessible deployment** of LyricLens (or a derivative) must remain open-source under the same AGPL license.
+- AGPL was chosen deliberately over MIT/GPL: the project author retains the option to dual-license for commercial use. For a commercial license, contact via Issues.
+
+Third-party assets (fonts, etc.) retain their own licenses — see [NOTICES.md](NOTICES.md).
+
+## Contributing
+
+PRs welcome. Add `Signed-off-by: Your Name <your@email>` to every commit message (`git commit -s` does this automatically) to certify that you are licensing your contribution under the project's terms — see the [Developer Certificate of Origin](https://developercertificate.org/).

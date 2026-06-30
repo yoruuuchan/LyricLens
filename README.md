@@ -160,3 +160,18 @@ npm test
 ```
 
 测试覆盖语言检测、歌词预处理、缓存 key、LLM JSON 容错解析和播放时间同步等纯逻辑模块。
+
+## License
+
+LyricLens 使用 [GNU Affero General Public License v3.0 或更高版本](LICENSE) (AGPL-3.0-or-later) 协议发布。
+
+简短说人话：
+- 你可以自由使用、修改、分发本项目。
+- 你 fork 出来的版本、以及任何**通过网络对外提供 LyricLens（或衍生）服务**的部署，都必须以同一 AGPL 协议开源。
+- 选择 AGPL 而非 MIT/GPL 是有意的：本项目保留以后双授权（commercial license）的可能性。如有商业授权需求请通过 Issues 联系。
+
+字体等第三方资源的版权与许可请见 [NOTICES.md](NOTICES.md)。
+
+## 贡献
+
+欢迎 PR。请在每个 commit message 末尾加 `Signed-off-by: Your Name <your@email>`（git 用 `git commit -s` 自动加），表示你同意按本项目协议授权你的贡献（[Developer Certificate of Origin](https://developercertificate.org/)）。
