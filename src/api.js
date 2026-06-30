@@ -1,7 +1,10 @@
 (function initLyricLensApi(root) {
   "use strict";
 
-  const PROMPT_VERSION = "v2";
+  // v3: point shape changed from string[] to {type, text}[]; old cached
+  // cards still render via the legacy renderer branch but show no type
+  // badges. Bumping the version forces re-analysis with the new prompt.
+  const PROMPT_VERSION = "v3";
   const ANALYSIS_REQUEST_TIMEOUT_FALLBACK_MS = 60000;
   const TEST_CONNECTION_TIMEOUT_MS = 12000;
 
@@ -46,6 +49,8 @@
     tone: "Tone & feeling: describe emotional nuance, register, and rhetorical effect."
   };
 
+  const VALID_POINT_TYPES = ["vocabulary", "grammar", "culture", "pronunciation", "tone", "general"];
+
   function languageDisplayName(code) {
     return LANGUAGE_NAMES[code] || code;
   }
@@ -57,12 +62,13 @@
 
 Pick 6-8 most valuable lines to learn from. Return ONLY a JSON object — no markdown, no code fences, no explanations.
 
-Shape: {"cards":[{"lineIndex":0,"original":"...","translation":"...","points":["...","..."],"note":"..."}]}
+Shape: {"cards":[{"lineIndex":0,"original":"...","translation":"...","points":[{"type":"vocabulary","text":"..."}],"note":"..."}]}
 
 Structural rules:
 - lineIndex: the original line number.
 - original: exact lyric line, don't rewrite.
 - startMs/endMs should be copied from input when present.
+- Each point MUST be an object with "type" and "text" fields. Valid types: vocabulary, grammar, culture, pronunciation, tone.
 - If fewer than 6 lines have learning value, return fewer cards — never pad.`;
     }
     return `You are a ${langName} learning assistant. The user provides timed song lyrics. Generate one learning card for every input lyric line.
@@ -70,10 +76,11 @@ Structural rules:
 Return ONLY a JSON object — no markdown, no code fences, no explanations.
 
 Required shape:
-{"cards":[{"lineIndex":0,"startMs":1234,"endMs":5678,"original":"...","translation":"...","points":["..."],"note":"..."}]}
+{"cards":[{"lineIndex":0,"startMs":1234,"endMs":5678,"original":"...","translation":"...","points":[{"type":"vocabulary","text":"..."}],"note":"..."}]}
 
 Structural rules:
 - cards.length must equal input lines.length.
+- Each point MUST be an object with "type" and "text" fields. Valid types: vocabulary, grammar, culture, pronunciation, tone.
 - Do not skip simple lines. If there is nothing worth teaching, points can be [] and note should briefly explain tone or meaning.
 - lineIndex must exactly match the input line index.
 - startMs/endMs should be copied from input when present.
@@ -85,23 +92,27 @@ Structural rules:
   function buildDefaultFocus(targetLanguage, knowledgePoints, isSelected) {
     const points = Array.isArray(knowledgePoints) ? knowledgePoints : [];
     const focusLines = points
-      .map((k) => KNOWLEDGE_POINT_SNIPPETS[k])
-      .filter(Boolean);
+      .filter((k) => KNOWLEDGE_POINT_SNIPPETS[k])
+      .map((k) => `- type "${k}" — ${KNOWLEDGE_POINT_SNIPPETS[k]}`);
+    const typeList = points.filter((k) => KNOWLEDGE_POINT_SNIPPETS[k]);
+    const allowedTypes = typeList.length > 0 ? typeList.join(", ") : "vocabulary, grammar, culture, pronunciation, tone";
     const focusBlock = focusLines.length > 0
-      ? "Focus areas:\n" + focusLines.map((l) => `- ${l}`).join("\n")
+      ? `Focus areas (produce AT MOST one point per area, skip the area entirely if there is nothing valuable to say about it for that line):\n${focusLines.join("\n")}`
       : "";
     if (isSelected) {
       return `Content rules:
 - translation: short ${targetLanguage} translation, one sentence.
-- points: at most 2 learning points, each ≤24 ${targetLanguage} characters.
+- points: array of {"type", "text"} objects. Only use these types: ${allowedTypes}.
+- text: ≤24 ${targetLanguage} characters. Avoid filler.
 - note: cultural or usage note, ≤60 ${targetLanguage} characters. Can be empty string.
 - If referenceTranslation or romanLyric is provided, use it only as reference.
 ${focusBlock}`;
     }
     return `Content rules:
 - translation must be natural ${targetLanguage}.
-- points: at most 1-2 items, each ≤50 ${targetLanguage} characters. Avoid filler.
-- note: ≤100 ${targetLanguage} characters.
+- points: array of {"type", "text"} objects. Only use these types: ${allowedTypes}.
+- text: ≤50 ${targetLanguage} characters per point. Avoid filler.
+- note: ≤100 ${targetLanguage} characters. Use for general feeling/meaning that doesn't fit a specific type.
 - If referenceTranslation or romanLyric is provided, use it only as reference.
 ${focusBlock}`;
   }
@@ -227,7 +238,34 @@ ${focusBlock}`;
 
   function normalizePoints(value) {
     if (!Array.isArray(value)) return [];
-    return value.filter((item) => typeof item === "string" && item.trim()).map((item) => String(item).slice(0, 200));
+    const result = [];
+    for (const item of value) {
+      // Legacy: plain string from old cards / older prompts → general type
+      if (typeof item === "string") {
+        const text = item.trim();
+        if (text) result.push({ type: "general", text: text.slice(0, 200) });
+        continue;
+      }
+      if (!item || typeof item !== "object") continue;
+      // New typed shape: {type, text}
+      const rawText = String(item.text ?? item.point ?? "").trim();
+      if (!rawText) {
+        // Legacy {phrase, meaning} shape (from very early prompt iterations).
+        // Compose "phrase：meaning" so the renderer can still split it.
+        const phrase = String(item.phrase ?? "").trim();
+        const meaning = String(item.meaning ?? "").trim();
+        if (phrase && meaning) {
+          result.push({ type: "general", text: `${phrase}：${meaning}`.slice(0, 200) });
+        } else if (meaning) {
+          result.push({ type: "general", text: meaning.slice(0, 200) });
+        }
+        continue;
+      }
+      const rawType = String(item.type ?? "").toLowerCase();
+      const type = VALID_POINT_TYPES.includes(rawType) ? rawType : "general";
+      result.push({ type, text: rawText.slice(0, 200) });
+    }
+    return result;
   }
 
   function rawContentSample(content) {

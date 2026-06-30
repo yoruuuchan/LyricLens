@@ -1,6 +1,14 @@
 (function initLyricLensCard(root) {
   "use strict";
 
+  const POINT_TYPE_LABELS = {
+    vocabulary: "词汇",
+    grammar: "语法",
+    culture: "文化背景",
+    pronunciation: "发音",
+    tone: "语感"
+  };
+
   function el(tag, className, text) {
     const node = root.document.createElement(tag);
     if (className) node.className = className;
@@ -30,6 +38,19 @@
       node.appendChild(head);
       return node;
     }
+    // Typed point: {type, text}
+    if (highlight && typeof highlight === "object" && typeof highlight.text === "string") {
+      const node = el("section", "ll-highlight");
+      const head = el("div", "ll-highlight-head");
+      const typeLabel = POINT_TYPE_LABELS[highlight.type];
+      if (typeLabel) {
+        head.appendChild(el("span", "ll-highlight-type", typeLabel));
+      }
+      head.appendChild(el("span", "ll-meaning", highlight.text));
+      node.appendChild(head);
+      return node;
+    }
+    // Legacy {phrase, meaning, ...} shape — kept for old cached cards.
     const node = el("section", "ll-highlight");
     const head = el("div", "ll-highlight-head");
     head.appendChild(el("span", "ll-phrase", highlight.phrase || ""));
@@ -66,15 +87,16 @@
     // raw "original" field, which can drift to an off-by-N lyric.
     fragment.appendChild(el("h2", "ll-line", card.original || card.line || ""));
     fragment.appendChild(el("div", "ll-translation", card.translation || ""));
-    fragment.appendChild(el("div", "ll-section-label", "学习点"));
 
-    const list = el("div", "ll-highlight-list");
+    // Only render the "学习点" section when there's actually something
+    // typed to show — otherwise we used to print a misleading hardcoded
+    // tone fallback. note remains the catch-all for general remarks.
     if (Array.isArray(card.highlights) && card.highlights.length) {
+      fragment.appendChild(el("div", "ll-section-label", "学习点"));
+      const list = el("div", "ll-highlight-list");
       card.highlights.forEach((highlight) => list.appendChild(renderHighlight(highlight, language)));
-    } else {
-      list.appendChild(el("div", "ll-empty-point", "这一句以语气和情绪表达为主。"));
+      fragment.appendChild(list);
     }
-    fragment.appendChild(list);
     if (typeof card.note === "string" && card.note.trim()) {
       const noteNode = el("div", "ll-note");
       noteNode.appendChild(el("b", "", "注释"));
