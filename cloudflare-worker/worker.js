@@ -947,23 +947,23 @@ const LANDING_HTML = `<!doctype html>
     letter-spacing: 0;
     white-space: nowrap;
   }
-  .hero p {
+  /* .lede = the two intro sentences directly under the H1. Scoped on
+     the class (not on a bare type selector) so .release-meta and .preqs
+     — both also p elements — don't get caught by these rules and lose
+     their own margins. */
+  .hero .lede {
     font-size: 21px;
     line-height: 1.6;
     color: var(--ink-2);
     margin: 0;
     max-width: 620px;
-    /* No text-wrap rule — earlier attempts with 'pretty' and 'balance'
-       both misfired on CJK copy (balance forced "学习"/"卡片" apart
-       trying to equalize line length). The hero copy is now split into
-       two <p>'s at the natural semantic seam (period between the two
-       clauses), so each paragraph fits on its own line at 620px / 21px
-       without any wrap algorithm. */
   }
-  /* Compact gap between the two hero paragraphs (they are one thought,
-     not two sections), then a generous gap before the action row. */
-  .hero p + p { margin-top: 6px; }
-  .hero p:last-of-type { margin-bottom: 36px; }
+  /* Tight gap between the two lede clauses (one thought, broken at the
+     period for visual rhythm). The 36px gap to the action row lives on
+     .actions margin-top — keeping it off .lede sidesteps the
+     :last-of-type pitfall where the "last p" turns out to be .preqs. */
+  .hero .lede + .lede { margin-top: 6px; }
+  .hero .actions { margin-top: 36px; }
 
   /* Actions */
   .actions {
@@ -1413,7 +1413,7 @@ const LANDING_HTML = `<!doctype html>
     main { padding: 56px 24px 72px; }
     .hero h1 { font-size: 56px; }
     .hero h1 .jp { font-size: 0.5em; margin-left: 12px; }
-    .hero p { font-size: 18px; }
+    .hero .lede { font-size: 18px; }
     .readme { margin-top: 72px; }
     .readme-content { font-size: 16px; }
     .readme-content h2 { font-size: 32px; margin: 80px 0 18px; }
@@ -1424,7 +1424,7 @@ const LANDING_HTML = `<!doctype html>
     main { padding: 40px 18px 64px; }
     .hero h1 { font-size: 42px; }
     .hero h1 .jp { display: block; margin-left: 0; margin-top: 8px; font-size: 18px; }
-    .hero p { font-size: 16px; }
+    .hero .lede { font-size: 16px; }
     .btn { height: 44px; font-size: 14px; }
     .row { padding: 14px 16px; }
     .theme-toggle { top: 16px; right: 16px; width: 38px; height: 38px; }
@@ -1471,8 +1471,8 @@ const LANDING_HTML = `<!doctype html>
   <section class="hero">
     <div class="eyebrow"><span class="dot"></span>plugin · betterncm</div>
     <h1>lyriclens<span class="jp" lang="ja">歌詞のレンズ</span></h1>
-    <p>把网易云每一句正在播放的歌词，变成一张外语学习卡片。</p>
-    <p>词汇、语法、文化注释，跟着旋律一起停留。</p>
+    <p class="lede">把网易云每一句正在播放的歌词，变成一张外语学习卡片。</p>
+    <p class="lede">词汇、语法、文化注释，跟着旋律一起停留。</p>
 
     <div class="actions">
       <a class="btn primary" href="/download">
