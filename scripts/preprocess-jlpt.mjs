@@ -35,7 +35,10 @@ const UPSTREAM_COMMITS_API =
 const SCHEMA_VERSION = 1;
 const SCHEMA_TAG = "v1";
 const DATA_TAG = "lyriclens-jlpt-levels";
-const BLOB_URL_BASE = "https://yoru-and-akari.dev/dicts/jlpt";
+// dicts.yoru-and-akari.dev is a dedicated subdomain for KV-backed dictionary
+// blobs — separated from the root yoru-and-akari.dev (which is the Pages
+// landing site) to keep routes clean. See docs/schema/jlpt-vocab.md.
+const BLOB_URL_BASE = "https://dicts.yoru-and-akari.dev/jlpt";
 
 function parseArgs() {
   const args = { dryRun: false, local: null, generatedAt: null };
