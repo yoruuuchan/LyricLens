@@ -25,13 +25,18 @@
 
 ## Cloudflare KV 结构
 
+**部署 target**：`dicts.yoru-and-akari.dev` 子域（`dicts-cdn` Worker + `LYRICLENS_DICTS` KV namespace）。schema 文档 lock 时预期的根路径 `yoru-and-akari.dev/dicts/...` 在实施时改为子域，因为根域已被 Cloudflare Pages landing 站占用 —— 子域分离更干净、未来 CEFR-J 家族共用同 CDN 更清晰。
+
 ```text
-lyriclens/dicts/jlpt/manifest.json
-lyriclens/dicts/jlpt/jlpt-levels.bluskyo-<version>.v1.json.br
-lyriclens/dicts/jlpt/jlpt-levels.yomitan-<version>.v1.json.br   ← 备选,可选上传
+KV key                                    公开 URL
+jlpt/manifest.json                        https://dicts.yoru-and-akari.dev/jlpt/manifest.json
+jlpt/jlpt-levels.bluskyo-<sha7>.v1.json.br  https://dicts.yoru-and-akari.dev/jlpt/jlpt-levels.bluskyo-<sha7>.v1.json.br
+jlpt/jlpt-levels.yomitan-<version>.v1.json.br  ← 备选,可选上传
 ```
 
 manifest 用短缓存（1h），versioned blob 用长缓存（`max-age=31536000, immutable`）。**发布流程**：先上传 blob → 等 KV 传播（~60s）→ 再更新 manifest。
+
+版本 tag 用 Bluskyo 上游 commit 的 short sha（脚本自动查 `commits?path=...` API 拿最近一次），例如 `bluskyo-d29a678.v1`。这样多次上游更新的 blob 可以在 KV 里共存，manifest 用 `latest` 字段指向当前活跃版本。
 
 ### manifest.json
 
@@ -39,20 +44,23 @@ manifest 用短缓存（1h），versioned blob 用长缓存（`max-age=31536000,
 {
   "name": "lyriclens-jlpt-levels",
   "schema": 1,
-  "latest": "bluskyo-1.5.v1",
+  "latest": "bluskyo-d29a678.v1",
+  "generated_at": "2026-07-01T19:58:31.327Z",
   "sources": {
-    "bluskyo-1.5.v1": {
-      "url": "https://yoru-and-akari.dev/dicts/jlpt/jlpt-levels.bluskyo-1.5.v1.json.br",
+    "bluskyo-d29a678.v1": {
+      "url": "https://dicts.yoru-and-akari.dev/jlpt/jlpt-levels.bluskyo-d29a678.v1.json.br",
       "encoding": "br",
       "license": "MIT-repo / CC-BY-upstream",
-      "source": "Bluskyo/JLPT_Vocabulary v1.5",
+      "source": "Bluskyo/JLPT_Vocabulary @ d29a678",
       "upstream": "Jonathan Waller / Tanos JLPT Resources (CC BY)",
-      "sha256": "<填>",
-      "bytes": 0
+      "sha256": "3df62da131e582aa0c0595c101bef7d478f9d2889a5fb03091d64a4483402b22",
+      "bytes": 63939
     }
   }
 }
 ```
+
+**首次上线数据规模** (Bluskyo @ d29a678, 2026-07-01)：8138 surfaces / 8505 candidates。level 分布 N1=3475 / N2=1846 / N3=1835 / N4=649 / N5=700。JSON 779 KB → brotli quality 11 压 63.9 KB (8.2%).
 
 ## Runtime JSON schema
 
@@ -199,11 +207,11 @@ rare spelling replacements
 
 ## 实现状态
 
-- [ ] manifest.json + KV 上传脚本
-- [ ] Bluskyo 数据预处理脚本（CSV → compact JSON → brotli）
-- [ ] Tauri Rust 端 manifest 拉取 + sha256 校验 + 解压 + HashMap 加载
-- [ ] Tauri command `jlpt_lookup(surface, reading?) → JlptLookupResult`
-- [ ] 桌面版前端 badge 渲染 + tooltip
-- [ ] About 页面 attribution
-- [ ] 插件版同步实现（lookup 走 BetterNCM 自身 fetch，缓存到 IndexedDB）
-- [ ] feature flag `JLPT_DATA_SOURCE` 设置入口
+- [x] manifest.json + KV 上传脚本 —— [`cloudflare-worker-dicts/upload-blob.sh`](../../../lyriclens-desktop/cloudflare-worker-dicts/upload-blob.sh)（桌面版仓库），blob-then-manifest 顺序 + 60s KV 传播等待
+- [x] Bluskyo 数据预处理脚本 —— [`scripts/preprocess-jlpt.mjs`](../../scripts/preprocess-jlpt.mjs)，upstream JSON → compact envelope → brotli q11 → sha256/manifest
+- [x] Tauri Rust 端 manifest 拉取 + sha256 校验 + 解压 + HashMap 加载 —— [`src-tauri/src/jlpt.rs`](../../../lyriclens-desktop/src-tauri/src/jlpt.rs) `bootstrap()` / `refresh_from_network()`
+- [x] Tauri command `jlpt_lookup(surface, reading?) → JlptLookupResult` —— `src-tauri/src/lib.rs` invoke_handler，State 是 `tokio::RwLock<JlptStore>` 在 setup hook 里 async 初始化
+- [x] 桌面版前端 badge 渲染 + tooltip —— `src/jlpt.ts` + `src/main.ts` `renderJlptBadgeSlot` / `hydrateJlptBadges`，两阶段（sync slot + async fill）+ 内存 cache
+- [x] About 页面 attribution —— `index.html` 设置 overlay 关于 tab 补 "JLPT 参考等级 · 致谢" section
+- [ ] 插件版同步实现（lookup 走 BetterNCM 自身 fetch，缓存到 IndexedDB）—— 主仓库独立 vertical
+- [ ] feature flag `JLPT_DATA_SOURCE` 设置入口 —— MVP 只有 Bluskyo blob，flag 意义不大，等真要切上 yomitan 再加
