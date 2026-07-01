@@ -16,6 +16,9 @@ LyricLens_D_E_research_raw_urls.md
 # Local probe scripts / benchmark results (run ad-hoc, not part of the plugin)
 probes/
 
+# Preprocess script output (jlpt blob + manifest, published to KV, not committed)
+scripts/out/
+
 # Rust / Cargo build output (companion/src-tauri/target/ is ~3+ GB)
 **/target/
 *.pdb
