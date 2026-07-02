@@ -871,3 +871,45 @@ test("normalizeCardsWithReport: whitespace differences do not block text rescue"
   assert.equal(report.cards[0].lineIndex, 0, "whitespace-normalized rescue moves card to lineIndex 0");
   assert.equal(report.dropReasons.indexRescuedByText, 1);
 });
+
+test("prompt v4: frame requires surface/reading on vocabulary and grammar points", () => {
+  const perLine = getSystemPrompt("ja", false, "per-line");
+  const selected = getSystemPrompt("en", false, "selected");
+  for (const prompt of [perLine, selected]) {
+    assert.match(prompt, /"surface"/);
+    assert.match(prompt, /base form \/ dictionary form/);
+    assert.match(prompt, /Omit surface\/reading for culture, pronunciation, and tone/);
+  }
+});
+
+test("PROMPT_VERSION is v4 (surface field invalidates v3 caches)", () => {
+  const { PROMPT_VERSION } = require("../src/api");
+  assert.equal(PROMPT_VERSION, "v4");
+});
+
+test("normalizePoints keeps surface/reading on vocabulary and grammar, strips them elsewhere", () => {
+  const lines = [{ index: 0, text: "花に亡霊", startTime: 1000 }];
+  const cards = normalizeCards({
+    cards: [{
+      index: 0,
+      line: "花に亡霊",
+      translation: "给花的亡灵",
+      points: [
+        { type: "vocabulary", text: "亡霊：亡灵", surface: " 亡霊 ", reading: "ぼうれい" },
+        { type: "grammar", text: "に的用法", surface: "に" },
+        { type: "tone", text: "哀而不伤", surface: "should-be-dropped", reading: "x" },
+        { type: "vocabulary", text: "无 surface 也合法" }
+      ]
+    }]
+  }, lines);
+
+  assert.equal(cards.length, 1);
+  const points = cards[0].points;
+  assert.equal(points[0].surface, "亡霊");
+  assert.equal(points[0].reading, "ぼうれい");
+  assert.equal(points[1].surface, "に");
+  assert.equal(points[1].reading, undefined);
+  assert.equal(points[2].surface, undefined);
+  assert.equal(points[2].reading, undefined);
+  assert.equal(points[3].surface, undefined);
+});

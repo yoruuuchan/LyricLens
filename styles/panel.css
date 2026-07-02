@@ -338,6 +338,48 @@
   flex: 0 0 auto;
 }
 
+/* Dictionary reference badges (JLPT / 考试标签 / CEFR-J). Slots are empty
+   inline spans until hydrated — zero width, nothing shifts when a word
+   has no dictionary hit. Outline style distinguishes them from the
+   filled type pill. */
+.ll-dict-slot {
+  display: inline-flex;
+  align-items: baseline;
+  flex: 0 0 auto;
+}
+
+.ll-dict-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 7px;
+  border: 1px solid var(--ll-primary);
+  border-radius: 999px;
+  color: var(--ll-primary);
+  background: transparent;
+  font-size: var(--ll-type-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: help;
+  opacity: 0.9;
+}
+
+.ll-dict-attribution {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--ll-line);
+}
+
+.ll-dict-attribution:last-child {
+  border-bottom: 0;
+}
+
+.ll-dict-attribution-title {
+  font-size: var(--ll-type-sm);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
 .ll-reading,
 .ll-arrow {
   margin-left: 7px;

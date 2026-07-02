@@ -38,10 +38,15 @@
     lastSeenLatest: "",
     targetLanguage: "中文",
     knowledgePoints: ["vocabulary", "grammar", "culture", "pronunciation", "tone"],
-    customPrompt: ""
+    customPrompt: "",
+    // Exam badge filter (高考/CET-4/CET-6/考研). "off" hides exam pills;
+    // JLPT and CEFR-J badges are unconditional and have no setting —
+    // same product decision as the desktop host.
+    targetExam: "off"
   };
 
   const VALID_KNOWLEDGE_POINTS = ["vocabulary", "grammar", "culture", "pronunciation", "tone"];
+  const VALID_TARGET_EXAMS = ["off", "gaokao", "cet4", "cet6", "kaoyan"];
 
   const MODEL_PRESETS = [
     { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", model: "deepseek-ai/DeepSeek-V4-Flash" },
@@ -143,7 +148,10 @@
       lastSeenLatest: String(input.lastSeenLatest ?? ""),
       targetLanguage: repairUtf8Mojibake(String(input.targetLanguage ?? "")).trim() || DEFAULT_SETTINGS.targetLanguage,
       knowledgePoints: normalizeKnowledgePoints(input.knowledgePoints),
-      customPrompt: repairUtf8Mojibake(String(input.customPrompt ?? ""))
+      customPrompt: repairUtf8Mojibake(String(input.customPrompt ?? "")),
+      targetExam: VALID_TARGET_EXAMS.includes(input.targetExam)
+        ? input.targetExam
+        : DEFAULT_SETTINGS.targetExam
     };
   }
 
@@ -242,6 +250,7 @@
     DEFAULT_SETTINGS,
     MODEL_PRESETS,
     VALID_KNOWLEDGE_POINTS,
+    VALID_TARGET_EXAMS,
     normalizeSettings,
     isApiConfigured,
     readSettings,
