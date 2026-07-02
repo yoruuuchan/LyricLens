@@ -667,3 +667,45 @@ test("readNowPlayingMeta: nothing available → null", () => {
     null
   );
 });
+
+test("readNowPlayingMeta: corona mini-bar selectors (footer .title/.author)", () => {
+  // On-device verified corona structure: .title excludes the VIP tag,
+  // .author's textContent joins artists with " / " (SMTC-identical).
+  const byNode = {
+    "footer .title-container .main-title .title": { textContent: "So Far Away" },
+    "footer .title-container .author": { textContent: "Martin Garrix / David Guetta / Jamie Scott / Romy Dya" }
+  };
+  const context = { document: { querySelector: (sel) => byNode[sel] || null } };
+  assert.deepEqual(Sync.readNowPlayingMeta(context), {
+    title: "So Far Away",
+    artist: "Martin Garrix / David Guetta / Jamie Scott / Romy Dya",
+    source: "dom(footer .title-container .main-title .title + footer .title-container .author)"
+  });
+});
+
+test("readMiniBarSongId: parses s_cid from the mini bar tracker payload", () => {
+  const node = {
+    getAttribute: (name) =>
+      name === "data-log"
+        ? JSON.stringify({ oid: "page_pc_mini_bar", params: { s_cid: "521416693", s_ctype: "song" } })
+        : null
+  };
+  const context = {
+    document: { querySelector: (sel) => (sel === "#page_pc_mini_bar[data-log]" ? node : null) }
+  };
+  assert.equal(Sync.readMiniBarSongId(context), "521416693");
+});
+
+test("readMiniBarSongId: non-song ctype, bad JSON, missing pieces → null", () => {
+  const make = (dataLog) => ({
+    document: {
+      querySelector: (sel) =>
+        sel === "#page_pc_mini_bar[data-log]" ? { getAttribute: () => dataLog } : null
+    }
+  });
+  assert.equal(Sync.readMiniBarSongId(make(JSON.stringify({ params: { s_cid: "123", s_ctype: "playlist" } }))), null);
+  assert.equal(Sync.readMiniBarSongId(make("not json")), null);
+  assert.equal(Sync.readMiniBarSongId(make(JSON.stringify({ params: { s_cid: "abc", s_ctype: "song" } }))), null);
+  assert.equal(Sync.readMiniBarSongId({ document: { querySelector: () => null } }), null);
+  assert.equal(Sync.readMiniBarSongId({}), null);
+});

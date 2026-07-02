@@ -364,9 +364,12 @@
     }
 
     if ((!title || !artist || !durationMs) && NcmLyricApi?.fetchSongDetail) {
-      // Last resort and the only step that needs a real numeric id —
-      // provisional/captured ids return null inside without a request.
-      const fetched = await NcmLyricApi.fetchSongDetail(songId);
+      // Last resort and the only step that needs a real numeric id.
+      // currentSongId is null/provisional on this build, but the mini
+      // bar's tracker payload carries the cloud id even for local
+      // files NCM matched against the cloud library.
+      const apiId = songId || Sync?.readMiniBarSongId?.() || null;
+      const fetched = await NcmLyricApi.fetchSongDetail(apiId);
       if (fetched) {
         title = title || fetched.title;
         artist = artist || fetched.artist;
