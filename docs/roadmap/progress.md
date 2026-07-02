@@ -13,6 +13,49 @@ tag 含义：`[plan]` 路线决策 / `[probe]` probe 结果 / `[ship]` 产品功
 
 ---
 
+## 2026-07-02 [ship] CEFR-J 参考等级词库全链路上线 — 决策 #12 双语收官
+
+CEFR-J vertical 一个 session 从 0 到收官：侦察 → 管道 + schema doc（[#20](https://github.com/yoruuuchan/LyricLens/pull/20)）→ Yoru 拍板两个决策点 → doc 转 locked（[#21](https://github.com/yoruuuchan/LyricLens/pull/21)）→ 桌面 badge（桌面 [#36](https://github.com/yoruuuchan/lyriclens-desktop/pull/36)）→ KV 上传 → CDN 冒烟全绿。**决策 #12（MVP 词库 = CEFR-J 英 + JLPT 日）到此双语全部落地。**
+
+- **侦察挖出一仓两 license 雷**：olp-en-cefrj 仓库无 LICENSE 文件（GitHub API license=null），条款全在 README §Terms of use，且两个数据文件条款不同——主表 A1-B2（Tono Lab TUFS，7799 行）research + commercial 免费 + 署名 🟢；Octanove C1/C2 补充是 CC BY-SA 4.0。**拍板点 1：C1/C2 排除**（ShareAlike 正是 JLPT 选型避开 yomitan 的同一义务），代价实测 1950 独有词——歌词场景超高阶词出现率低，宁缺毋滥。
+- **拍板点 2：UI 无条件显示**，与 JLPT 完全对称（CEFR-J 之于英语 = JLPT 之于日语），不加设置项——LLM 挑词已过滤 trivial 词，A1 泛滥场景实际不存在。
+- **管道 `scripts/preprocess-cefrj.mjs`**（单源无互证，比 enexam 简单一半）：斜杠变体拆分（167 行）/ é 折叠别名（café→cafe 双 key）/ 短语保留（人工数据非 OCR 噪音）/ 同词多行取最低级（above→A1 不是 B1，"参考等级"=最早接触难度）。实跑 **7017 keys / brotli 23.2KB**（三 family 最轻）/ dropped 仅 3（'m 're 's 缩约词尾）。规模校验六道带全实测锚定，出带 exit 2。
+- schema doc 起草时标 **proposed**、两个拍板点显式标出，拍板后 #21 转 locked。"proposed → 拍板 → locked" 流程跑通（对比 enexam 的"锁死后实测修正"，这个顺序更顺）。
+- **KV + CDN**：`cefrj/manifest.json` + `cefrj-levels.olp-c5c6a64.v1.json.br`（23211 bytes）上线 dicts.yoru-and-akari.dev；冒烟 sha256 匹配 / brotli 解压 7017 entries / 抽查 above→A1、café+cafe→A1、according to→B1 全对。build key 走 JLPT 单源惯例 `olp-<sha7>.v1`（非 enexam 的日期形式）。
+- **桌面版**（桌面 #36）：`cefrj.rs` = enexam.rs 孪生（session 7 dict_store 泛型化直接受益），`DictStore<String>` lowercase exact match，第三并发 bootstrap；badge 照 JLPT pattern 命中即显示；`.point-row` grid 4→5 列，英文词可同时挂 enexam + cefrj 双 pill（考纲归属 vs 难度，正交）；About 加 Tono Lab (TUFS) 致谢。cargo 64 全绿。
+- **真机验收全过**（Yoru 2026-07-02 截图）：CEFR badge abandon→B1 / ability→A2 / acute→B2 / abolish→B2 全对；**mastery 四色 dot 同屏验收通过**（session 6 遗留清账：new「从未复习」/ yes 绿「今天过」/ meh「昨天过」/ no 红「7 天前过」）。
+
+附加事件：**两仓库分支大扫除**（session 3 遗留销账）——桌面删 9 本地 + 11 远端，主仓库删 5 本地 + 8 远端 merged 分支，两边只剩 main。踩坑三连：`git push --delete` 一个 ref 不存在会全批中止（先 `git fetch --prune`）；squash-merge 的分支 `--merged` 检测不到（拿 `gh pr list --state merged` 对 headRefName）；跨仓库 `gh pr create` 必须显式 `--head`/`--base`（cwd 上下文会猜错）。
+
+下一步：
+- 插件版四件套同步（JLPT + mastery + enexam + cefrj）——独立大 vertical，建议专门 session
+- 雅思/托福 community 弱标签（en-exam doc 二期预留，优先级最低）
+
+## 2026-07-01 [ship] 英语考试标签词库全链路上线 — 双源互证管道 + 桌面 badge
+
+英语考试标签（高考/CET-4/CET-6/考研）vertical 单 session 从 0 到收官：管道（[#19](https://github.com/yoruuuchan/LyricLens/pull/19)）→ KV/CDN → 桌面（桌面 [#35](https://github.com/yoruuuchan/lyriclens-desktop/pull/35)）。前置 schema [#18](https://github.com/yoruuuchan/LyricLens/pull/18) 当日稍早 merge。
+
+- **侦察第一锹挖出真雷**：lin-mo-han/english-vocabulary-master 仓库里只有 20 个硬编码示例词（README 宣称"完整覆盖 3500"，靠用户自建 MySQL 导入）。GPT 调研的 license 结论对（MIT），数据假设失实——**核验不能只看 LICENSE/README，必须实测数据文件**。gaokao 第二互证源改 ECDICT `gk` tag（交集 3655 / gk 全集 3677 = 99.4% 重合），与 CET 完全同模式。
+- kaoyan 实测 4801 对 NETEM 5530 覆盖 86.8%，超 doc 预拍的 10% 偏差阈值（session 6 未实测拍值）→ 改绝对带 + 覆盖率 ≥80%。三处 doc 修正理由写进 PR 描述，Yoru 拍板通过（doc 说"改之前必须重新讨论"，PR 就是讨论场）。
+- **管道 `scripts/preprocess-enexam.mjs`**（444 行，复用 jlpt 模板）：三源下载（ecdict.csv 66MB 本地缓存 + `--refresh`）、双源互证（官方名单 OCR 定名单 × ECDICT 定级别）、dropped.txt 3097 条带原因不静默、规模校验出带 exit 2、确定性输出。产物 **6734 词条 / brotli 25.8KB**。manifest sources 用 `commits?path=<file>` 语义（数据文件级 sha，可复现）。
+- drop 样本人工抽查：`acut/afte`（OCR 错词）、`arose/awoken`（动词变位，LLM 只给原形用不上）——双源互证丢得全对。
+- **KV + CDN**：`enexam/manifest.json` + `enexam-tags.multi-20260701.v1.json.br` 上线；冒烟 sha256 一致 / 6734 entries / abandon→["gaokao","cet4","kaoyan"] ✓。Worker allowlist 是通用 `<family>/` 规则，零改动。
+- **桌面版**（桌面 #35）两 commit：先 **refactor** 把 jlpt.rs 的 manifest→sha256→brotli→缓存 bootstrap 抽成泛型 `dict_store.rs`（`Envelope<V>` / `DictStore<V>`，schema doc 预留评估项，评估结论=抽，CEFR-J 三期直接受益）；再 **feat** 上 `enexam.rs` + `targetExam` 设置（segmented 单选 off/gaokao/cet4/cet6/kaoyan，localStorage——UI 偏好非凭证）+ badge slot/hydrate + About 三源致谢。cargo 58 全绿。
+- 设计点：**过滤在前端 apply 时做**（Rust 返回全部 tags，换考试体系从缓存同步重标零 IPC）；不做语言检测（日文词天然 miss 全英文 key space）；targetExam=off 不发 IPC。
+- mastery 四色测试 JSON 交付（假歌 4 entry 覆盖 new/yes/meh/no，验收在次日 CEFR-J session 完成）。
+
+踩坑：repo 里 .sh 是 CRLF（`wsl bash /mnt/d/...` 直接炸，wrapper 里 `sed 's/\r$//'` 先行）；generatedAt 是 UTC（build tag `multi-20260701` 因跑时 UTC 未过午夜——key 与 generated_at 自洽即可，别改成本地时区）；`commits?path=` 的数据文件级 sha ≠ repo HEAD sha（前者才是对的，别看到不一致就慌）。
+
+## 2026-07-01 [ship] JLPT 管道收官 + notebook-entry v1.1 + enexam schema 定稿
+
+词库基建第一波三个 PR 同晚 merge（session 全貌详见桌面版 progress 2026-07-02 session 6 条）：
+
+- [#16](https://github.com/yoruuuchan/LyricLens/pull/16)：Bluskyo JLPT 预处理管道 + jlpt-vocab.md schema closeout——**决策 #12 日语半落地**。数据上线 `dicts.yoru-and-akari.dev`（KV family `jlpt/*`），桌面版 badge + hover tooltip 真机验收通过（桌面 [#30](https://github.com/yoruuuchan/lyriclens-desktop/pull/30)），preprocess dry-run 远程复验数字逐项一致。
+- [#17](https://github.com/yoruuuchan/LyricLens/pull/17)：notebook-entry v1.1——`mastery` + `lastReviewedAt` additive 字段，服务桌面版笔记本四色掌握度 dot（桌面 [#31](https://github.com/yoruuuchan/lyriclens-desktop/pull/31)）。**optional 字段不 bump 顶层 schema 字符串**（additive 惯例，与 Yoru 确认）。
+- [#18](https://github.com/yoruuuchan/LyricLens/pull/18)：en-exam-vocab.md schema 定稿——一期高考/CET-4/CET-6/考研，设置单选目标考试（默认 off）只显示选中体系；雅思托福二期做社区弱标签。雷区写死进 doc：kajweb/dict 谱系（商业 App 抓取）/ mahavivo（无 license）/ Oxford/EVP（专有）；NETEM 数据 CC BY-NC-SA 只做计数校验不分发。blob 只存 word + tags[]，版权面最薄。
+
+调研模式跑顺：Claude 写 prompt → Yoru 的 GPT Plus 跑 license 审计 → Claude 核验决策级仓库 LICENSE/README 原文，零幻觉。（"数据文件也要实测"的教训在次日 enexam 实现时补上——见上一条。）
+
 ## 2026-06-30 [ship] 桌面版 per-line 分批 + pause-follow + 顺手修 LyricLine bug
 
 承接 session 5 的 timeline health probe 工作，把 HANDOFF 排序的 🥈 per-line 分批 和🥉 README 改完之后，加做了一个计划外的 pause-follow。一晚 4 个桌面版 PR + 1 个主仓库 docs PR。
