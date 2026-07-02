@@ -38,7 +38,7 @@
       node.appendChild(head);
       return node;
     }
-    // Typed point: {type, text}
+    // Typed point: {type, text} (+ optional surface/reading since prompt v4)
     if (highlight && typeof highlight === "object" && typeof highlight.text === "string") {
       const node = el("section", "ll-highlight");
       const head = el("div", "ll-highlight-head");
@@ -47,6 +47,7 @@
         head.appendChild(el("span", "ll-highlight-type", typeLabel));
       }
       head.appendChild(el("span", "ll-meaning", highlight.text));
+      appendDictSlots(head, highlight);
       node.appendChild(head);
       return node;
     }
@@ -111,7 +112,94 @@
     return wrapper;
   }
 
-  const api = { el, renderCard, renderHighlight, renderMessage };
+  // ── Dictionary badge slots + hydration ──────────────────────────
+  //
+  // Two-phase like the desktop host: renderHighlight emits empty slot
+  // spans carrying the lookup key in data attributes; hydrateDictBadges
+  // fills them from the in-memory stores. Lookups are synchronous here
+  // (no IPC), but the stores bootstrap asynchronously after plugin
+  // start — main.js re-renders once they're ready, and the panel
+  // rebuilds its DOM on every render anyway, so hydration runs fresh
+  // each time.
+
+  function appendDictSlots(head, highlight) {
+    // Only vocabulary/grammar points carry a dictionary form; see the
+    // matching guard in api.js normalizePoints.
+    if (highlight.type !== "vocabulary" && highlight.type !== "grammar") return;
+    const surface = typeof highlight.surface === "string" ? highlight.surface.trim() : "";
+    if (!surface) return;
+    const reading = typeof highlight.reading === "string" ? highlight.reading.trim() : "";
+
+    const jlpt = el("span", "ll-dict-slot ll-jlpt-slot");
+    jlpt.dataset.surface = surface;
+    jlpt.dataset.reading = reading;
+    head.appendChild(jlpt);
+
+    const enexam = el("span", "ll-dict-slot ll-enexam-slot");
+    enexam.dataset.word = surface;
+    head.appendChild(enexam);
+
+    const cefrj = el("span", "ll-dict-slot ll-cefrj-slot");
+    cefrj.dataset.word = surface;
+    head.appendChild(cefrj);
+  }
+
+  function makeBadge(text, title) {
+    const badge = el("span", "ll-dict-badge", text);
+    badge.title = title;
+    return badge;
+  }
+
+  function fillSlot(slot, badge) {
+    slot.innerHTML = "";
+    if (badge) slot.appendChild(badge);
+  }
+
+  // Fill every dict slot under rootNode from the current stores.
+  // Idempotent: each call recomputes from scratch, so re-running after
+  // a store becomes ready or targetExam changes is always safe.
+  function hydrateDictBadges(rootNode, options = {}) {
+    const Dicts = root.LyricLens?.Dicts;
+    if (!Dicts || !rootNode?.querySelectorAll) return;
+    const targetExam = options.targetExam || "off";
+
+    for (const slot of Array.from(rootNode.querySelectorAll(".ll-jlpt-slot"))) {
+      const entries = Dicts.jlptLookup(slot.dataset.surface, slot.dataset.reading || undefined);
+      const label = Dicts.formatJlptBadgeLabel(entries);
+      if (!label) {
+        // Miss → no badge, no「未知」noise (schema doc §UI 渲染规则).
+        fillSlot(slot, null);
+        continue;
+      }
+      const marker = Dicts.jlptAmbiguityMarker(entries);
+      fillSlot(slot, makeBadge(
+        marker ? `${label}${marker}` : label,
+        marker ? Dicts.JLPT_BADGE_TITLE_AMBIGUOUS : Dicts.JLPT_BADGE_TITLE
+      ));
+    }
+
+    for (const slot of Array.from(rootNode.querySelectorAll(".ll-enexam-slot"))) {
+      if (targetExam === "off") {
+        fillSlot(slot, null);
+        continue;
+      }
+      const tags = Dicts.enexamLookup(slot.dataset.word);
+      // Only the user's selected exam system renders; the store returns
+      // every tag so switching exams is a re-render, not a re-fetch.
+      if (!tags.includes(targetExam)) {
+        fillSlot(slot, null);
+        continue;
+      }
+      fillSlot(slot, makeBadge(Dicts.EXAM_TAG_LABELS[targetExam] || targetExam, Dicts.EXAM_BADGE_TITLE));
+    }
+
+    for (const slot of Array.from(rootNode.querySelectorAll(".ll-cefrj-slot"))) {
+      const level = Dicts.cefrjLookup(slot.dataset.word);
+      fillSlot(slot, level ? makeBadge(level, Dicts.CEFRJ_BADGE_TITLE) : null);
+    }
+  }
+
+  const api = { el, renderCard, renderHighlight, renderMessage, hydrateDictBadges };
   root.LyricLens = root.LyricLens || {};
   root.LyricLens.Card = api;
   if (typeof module !== "undefined" && module.exports) {

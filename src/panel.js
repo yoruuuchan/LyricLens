@@ -817,6 +817,7 @@
         return;
       }
       content.appendChild(Card.renderCard(card, currentAnalysis.language));
+      Card.hydrateDictBadges?.(content, { targetExam: settings.targetExam });
       const sample = [card.line, card.translation].filter(Boolean).join(" / ");
       recordPanelDiagnostics(sample);
     }
@@ -964,6 +965,12 @@
       const learning = settingsSection("学习偏好");
       learning.appendChild(targetLanguageSetting());
       learning.appendChild(knowledgePointsControl());
+      learning.appendChild(selectSetting(
+        "目标考试标签",
+        "targetExam",
+        [["off", "关闭"], ["gaokao", "高考"], ["cet4", "CET-4"], ["cet6", "CET-6"], ["kaoyan", "考研"]],
+        "选中后，英语词汇点命中该考纲时在卡片上显示参考标签。JLPT / CEFR-J 等级徽章不受此项影响，命中即显示。"
+      ));
       body.appendChild(learning);
 
       const prompt = settingsSection("自定义 Prompt");
@@ -1006,6 +1013,8 @@
       metaList.appendChild(aboutMetaRow("GitHub", "yoruuuchan/LyricLens"));
       meta.appendChild(metaList);
       body.appendChild(meta);
+
+      renderDictAttributions(body);
 
       const feedback = settingsSection("开发者意见反馈");
       feedback.appendChild(renderFeedbackCard());
@@ -1180,6 +1189,54 @@
       row.appendChild(Card.el("span", "ll-about-meta-label", label));
       row.appendChild(Card.el("span", "ll-about-meta-value", value));
       return row;
+    }
+
+    // Dictionary attribution blocks. The wordlist licenses require
+    // citation (CEFR-J explicitly: "cite the dataset properly"), and the
+    // 参考/非官方 wording is a schema-doc hard rule — keep the copy in
+    // sync with the desktop host's About tab, don't soften it.
+    function renderDictAttributions(body) {
+      const section = settingsSection("词库与致谢");
+      section.appendChild(dictAttributionBlock(
+        "JLPT 参考等级",
+        [
+          ["词表", "Bluskyo/JLPT_Vocabulary"],
+          ["上游", "Tanos JLPT Resources (Jonathan Waller)"],
+          ["许可", "MIT (repo) · CC BY (上游数据)"]
+        ],
+        "词汇/语法点右侧的「JLPT N?」小徽章展示的是参考等级——来自社区整理的词表。与 JLPT 主办方（Japan Foundation / JEES）没有任何关联，也不代表官方词表。词表压缩后放在 CDN，插件启动时按清单校验加载。"
+      ));
+      section.appendChild(dictAttributionBlock(
+        "英语考试参考标签",
+        [
+          ["CET 名单", "JavaProgrammerLB/cet-word-list"],
+          ["级别标签", "skywind3000/ECDICT"],
+          ["高考名单", "pluto0x0/word3500"],
+          ["许可", "MIT · 交叉整理"]
+        ],
+        "高考 / CET-4 / CET-6 / 考研标签由以上 MIT 协议开源项目交叉整理，仅保留单词与考试标签两个字段，不含释义、音标、例句。标签为社区整理的参考信息，与教育部教育考试院及任何考试主办方无关联，未获任何官方背书。在 AI 服务 → 目标考试标签中选择考试体系后显示。"
+      ));
+      section.appendChild(dictAttributionBlock(
+        "CEFR-J 参考等级",
+        [
+          ["词表", "The CEFR-J Wordlist Version 1.5"],
+          ["编纂", "Yukio Tono, Tokyo University of Foreign Studies"],
+          ["分发", "openlanguageprofiles/olp-en-cefrj"],
+          ["许可", "© Tono Lab (TUFS) · 注明出处可免费商用"]
+        ],
+        "「A1 / A2 / B1 / B2」小徽章展示的是 CEFR-J 参考等级——东京外国语大学投野研究室编制的日本适配版 CEFR 分级，版权归投野研究室所有。LyricLens 仅保留单词与等级两个字段，不含词性、释义、例句。等级为参考信息，与 CEFR-J 项目无关联，未获官方背书。"
+      ));
+      body.appendChild(section);
+    }
+
+    function dictAttributionBlock(title, rows, copy) {
+      const block = Card.el("div", "ll-dict-attribution");
+      block.appendChild(Card.el("div", "ll-dict-attribution-title", title));
+      const meta = Card.el("div", "ll-about-meta");
+      rows.forEach(([label, value]) => meta.appendChild(aboutMetaRow(label, value)));
+      block.appendChild(meta);
+      block.appendChild(Card.el("div", "ll-settings-note", copy));
+      return block;
     }
 
     function readPluginVersionLocal() {
@@ -2051,6 +2108,10 @@
         return next;
       },
       getAutoFollow: () => stateController.getState().autoFollow,
+      // Full re-render of the current view. main.js calls this after the
+      // dictionary stores finish bootstrapping so an already-visible card
+      // picks up its badges without waiting for the next state change.
+      rerender: render,
       setPoppedOut,
       setBridgeStatus,
       setUpdateState,

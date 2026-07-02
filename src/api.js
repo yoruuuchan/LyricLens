@@ -4,7 +4,10 @@
   // v3: point shape changed from string[] to {type, text}[]; old cached
   // cards still render via the legacy renderer branch but show no type
   // badges. Bumping the version forces re-analysis with the new prompt.
-  const PROMPT_VERSION = "v3";
+  // v4: vocabulary/grammar points gain optional surface (+ reading for
+  // Japanese) so dictionary badges (JLPT / 考试标签 / CEFR-J) can look the
+  // word up. Same shape as the desktop host's analysis.ts.
+  const PROMPT_VERSION = "v4";
   const ANALYSIS_REQUEST_TIMEOUT_FALLBACK_MS = 60000;
   const TEST_CONNECTION_TIMEOUT_MS = 12000;
 
@@ -62,13 +65,14 @@
 
 Pick 6-8 most valuable lines to learn from. Return ONLY a JSON object — no markdown, no code fences, no explanations.
 
-Shape: {"cards":[{"lineIndex":0,"original":"...","translation":"...","points":[{"type":"vocabulary","text":"..."}],"note":"..."}]}
+Shape: {"cards":[{"lineIndex":0,"original":"...","translation":"...","points":[{"type":"vocabulary","text":"...","surface":"...","reading":"..."}],"note":"..."}]}
 
 Structural rules:
 - lineIndex: the original line number.
 - original: exact lyric line, don't rewrite.
 - startMs/endMs should be copied from input when present.
 - Each point MUST be an object with "type" and "text" fields. Valid types: vocabulary, grammar, culture, pronunciation, tone.
+- For "vocabulary" and "grammar" points, also include "surface" (the base form / dictionary form of the word or phrase as it would be looked up) and, when the source language is Japanese, "reading" (kana). Omit surface/reading for culture, pronunciation, and tone types.
 - If fewer than 6 lines have learning value, return fewer cards — never pad.`;
     }
     return `You are a ${langName} learning assistant. The user provides timed song lyrics. Generate one learning card for every input lyric line.
@@ -76,11 +80,12 @@ Structural rules:
 Return ONLY a JSON object — no markdown, no code fences, no explanations.
 
 Required shape:
-{"cards":[{"lineIndex":0,"startMs":1234,"endMs":5678,"original":"...","translation":"...","points":[{"type":"vocabulary","text":"..."}],"note":"..."}]}
+{"cards":[{"lineIndex":0,"startMs":1234,"endMs":5678,"original":"...","translation":"...","points":[{"type":"vocabulary","text":"...","surface":"...","reading":"..."}],"note":"..."}]}
 
 Structural rules:
 - cards.length must equal input lines.length.
 - Each point MUST be an object with "type" and "text" fields. Valid types: vocabulary, grammar, culture, pronunciation, tone.
+- For "vocabulary" and "grammar" points, also include "surface" (the base form / dictionary form of the word or phrase as it would be looked up) and, when the source language is Japanese, "reading" (kana). Omit surface/reading for culture, pronunciation, and tone types.
 - Do not skip simple lines. If there is nothing worth teaching, points can be [] and note should briefly explain tone or meaning.
 - lineIndex must exactly match the input line index.
 - startMs/endMs should be copied from input when present.
@@ -263,7 +268,19 @@ ${focusBlock}`;
       }
       const rawType = String(item.type ?? "").toLowerCase();
       const type = VALID_POINT_TYPES.includes(rawType) ? rawType : "general";
-      result.push({ type, text: rawText.slice(0, 200) });
+      const point = { type, text: rawText.slice(0, 200) };
+      // surface / reading are only accepted from vocabulary + grammar
+      // types — dictionary lookup makes no sense for the other three,
+      // and letting the model attach them there would confuse the badge
+      // into a false hit. Missing surface is fine (old cache, model
+      // omission): the badge simply doesn't render.
+      if (type === "vocabulary" || type === "grammar") {
+        const surface = typeof item.surface === "string" ? item.surface.trim() : "";
+        const reading = typeof item.reading === "string" ? item.reading.trim() : "";
+        if (surface) point.surface = surface.slice(0, 40);
+        if (reading) point.reading = reading.slice(0, 40);
+      }
+      result.push(point);
     }
     return result;
   }

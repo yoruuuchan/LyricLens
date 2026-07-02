@@ -163,3 +163,13 @@ test("normalizeSettings repairs UTF-8 mojibake in learning prompt settings", () 
   assert.match(settings.customPrompt, /natural 中文/);
   assert.match(settings.customPrompt, /≤100 中文/);
 });
+
+test("normalizeSettings validates targetExam and defaults to off", () => {
+  assert.equal(DEFAULT_SETTINGS.targetExam, "off");
+  assert.equal(normalizeSettings({}).targetExam, "off");
+  assert.equal(normalizeSettings({ targetExam: "cet4" }).targetExam, "cet4");
+  assert.equal(normalizeSettings({ targetExam: "kaoyan" }).targetExam, "kaoyan");
+  // Unknown values (incl. future ielts/toefl before they ship) fall back to off
+  assert.equal(normalizeSettings({ targetExam: "ielts" }).targetExam, "off");
+  assert.equal(normalizeSettings({ targetExam: 42 }).targetExam, "off");
+});
