@@ -2,7 +2,7 @@
   "use strict";
 
   const LL = root.LyricLens || {};
-  const { Utils, Lyrics, Detect, Api, Cache, Sync, Settings, Panel, Diagnostics, Styles, Capture, Bridge, NcmLyricApi } = LL;
+  const { Utils, Lyrics, Detect, Api, Cache, Sync, Settings, Panel, Diagnostics, Styles, Capture, Bridge, NcmLyricApi, Dicts } = LL;
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   let settings = Settings.DEFAULT_SETTINGS;
@@ -280,6 +280,28 @@
     // (default on). Sets a badge on the gear icon if a newer version
     // exists than what the user has seen.
     scheduleStartupUpdateCheck();
+
+    scheduleDictsBootstrap();
+  }
+
+  // Dictionary stores for the vocabulary badges (JLPT / 考试标签 / CEFR-J).
+  // Deferred 3s so the ~130 KB of blob fetches don't compete with NCM's
+  // own startup traffic or the first song's analyze. Failure is fully
+  // degraded inside Dicts (empty stores, no badges) — never blocks
+  // anything, which is also why bootstrap() has no module-presence gate
+  // for it.
+  function scheduleDictsBootstrap() {
+    if (!Dicts?.bootstrapAll) return;
+    setTimeout(() => {
+      Dicts.bootstrapAll()
+        .then((diag) => {
+          diagnostics?.updateState?.({ dictsStatus: diag?.status || null, dictsSizes: diag?.sizes || null });
+          // A card may already be on screen; repaint so its badge slots
+          // hydrate from the now-ready stores.
+          panel?.rerender?.();
+        })
+        .catch((err) => Utils.warn("dicts bootstrap 异常", err));
+    }, 3000);
   }
 
   const handleRuntimeLyricsCapturedDebounced = Utils.debounce((detail) => {
