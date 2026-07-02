@@ -1272,6 +1272,33 @@
   letter-spacing: 0.08em;
 }
 
+.ll-nb-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.ll-nb-toolbar-actions .ll-ghost-button {
+  min-height: 28px;
+  padding: 0 9px;
+  font-size: var(--ll-type-2xs);
+}
+
+.ll-nb-status {
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: var(--ll-primary-soft);
+  color: var(--ll-text-secondary);
+  font-size: var(--ll-type-2xs);
+  overflow-wrap: anywhere;
+}
+.ll-nb-status.ll-is-error {
+  background: transparent;
+  border: 1px solid var(--ll-danger);
+  color: var(--ll-danger);
+}
+
 .ll-nb-list {
   display: flex;
   flex-direction: column;
