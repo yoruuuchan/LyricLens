@@ -327,15 +327,22 @@ test("serializeEntry keeps desktop key order and omission rules", () => {
   try {
     const plain = Notebook.serializeEntry(makeEntry({ card: makeCard({ points: [{ type: "general", text: "t" }] }) }));
     assert.deepEqual(Object.keys(plain), [
-      "id", "songKey", "songTitle", "songArtist", "lineIndex", "lineText",
-      "card", "userNote", "starredAt", "updatedAt", "source", "mastery", "lastReviewedAt"
+      "card", "id", "lastReviewedAt", "lineIndex", "lineText", "mastery",
+      "songArtist", "songKey", "songTitle", "source", "starredAt", "updatedAt", "userNote"
+    ]);
+    assert.deepEqual(Object.keys(plain.card), [
+      "endMs", "index", "lineIndex", "note", "original", "points", "startMs", "translation"
     ]);
     assert.equal("importMergedFrom" in plain, false); // omitted when absent
     assert.deepEqual(plain.card.points[0], { type: "general", text: "t" }); // surface/reading omitted
+    assert.deepEqual(Object.keys(plain.card.points[0]), ["text", "type"]);
     assert.equal(plain.card.startMs, 30000);
 
+    const withOptionalPoint = Notebook.serializeEntry(makeEntry());
+    assert.deepEqual(Object.keys(withOptionalPoint.card.points[0]), ["reading", "surface", "text", "type"]);
+
     const merged = Notebook.serializeEntry(makeEntry({ importMergedFrom: [UUID_B] }));
-    assert.deepEqual(Object.keys(merged).slice(-3), ["importMergedFrom", "mastery", "lastReviewedAt"]);
+    assert.deepEqual(Object.keys(merged).slice(0, 4), ["card", "id", "importMergedFrom", "lastReviewedAt"]);
   } finally {
     restore();
   }

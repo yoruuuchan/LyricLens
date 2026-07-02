@@ -1,0 +1,1528 @@
+{
+  "schema": "lyriclens.crosshost-notebook-conformance.v1",
+  "exportTsMs": 1782979200000,
+  "makeSongKey": [
+    {
+      "name": "trim lowercase round down",
+      "title": "  Brave Shine ",
+      "artist": " Aimer ",
+      "durationMs": 234499,
+      "expected": "brave shine|aimer|234"
+    },
+    {
+      "name": "round half up",
+      "title": "Song",
+      "artist": "Artist",
+      "durationMs": 234500,
+      "expected": "song|artist|235"
+    },
+    {
+      "name": "multi artist separator preserved",
+      "title": "So Far Away",
+      "artist": "Martin Garrix / David Guetta / Jamie Scott",
+      "durationMs": 183000,
+      "expected": "so far away|martin garrix / david guetta / jamie scott|183"
+    },
+    {
+      "name": "fullwidth characters preserved",
+      "title": " 写真 ",
+      "artist": " 宇多田ヒカル ",
+      "durationMs": 251500,
+      "expected": "写真|宇多田ヒカル|252"
+    }
+  ],
+  "exportEntries": [
+    {
+      "id": "11111111-2222-4333-8444-555555555555",
+      "songKey": "brave shine|aimer|234",
+      "songTitle": "Brave Shine",
+      "songArtist": "Aimer",
+      "lineIndex": 3,
+      "lineText": "強く眩しい光が",
+      "card": {
+        "index": 3,
+        "lineIndex": 3,
+        "original": "強く眩しい光が",
+        "translation": "强烈而耀眼的光",
+        "points": [
+          {
+            "type": "vocabulary",
+            "text": "眩しい: 耀眼的",
+            "surface": "眩しい",
+            "reading": "まぶしい"
+          },
+          {
+            "type": "mystery",
+            "text": "future kind falls back"
+          }
+        ],
+        "note": "LLM 補足",
+        "startMs": 30000,
+        "endMs": 34500
+      },
+      "userNote": "本地\t备注\n第二行",
+      "starredAt": 1782982800000,
+      "updatedAt": 1782983100000,
+      "source": "desktop",
+      "importMergedFrom": [
+        "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+      ],
+      "mastery": "meh",
+      "lastReviewedAt": 1782981000000
+    },
+    {
+      "id": "99999999-8888-4777-8666-555555555555",
+      "songKey": "one last kiss|宇多田ヒカル|252",
+      "songTitle": "One Last Kiss",
+      "songArtist": "宇多田ヒカル",
+      "lineIndex": 7,
+      "lineText": "写真は苦手なんだ",
+      "card": {
+        "index": 7,
+        "lineIndex": 7,
+        "original": "写真は苦手なんだ",
+        "translation": "我不太擅长拍照",
+        "points": [
+          {
+            "type": "grammar",
+            "text": "なんだ: 解释语气",
+            "surface": "なんだ"
+          }
+        ],
+        "note": "",
+        "startMs": null,
+        "endMs": null
+      },
+      "userNote": "",
+      "starredAt": 1782907200000,
+      "updatedAt": 1782909000000,
+      "source": "plugin",
+      "mastery": "yes",
+      "lastReviewedAt": 1782975600000
+    }
+  ],
+  "invalidEntries": [
+    {
+      "name": "bad uuid",
+      "entry": {
+        "card": {
+          "endMs": 34500,
+          "index": 0,
+          "lineIndex": 0,
+          "note": "LLM 補足",
+          "original": "強く眩しい光が",
+          "points": [
+            {
+              "reading": "まぶしい",
+              "surface": "眩しい",
+              "text": "眩しい: 耀眼的",
+              "type": "vocabulary"
+            },
+            {
+              "text": "future kind falls back",
+              "type": "mystery"
+            }
+          ],
+          "startMs": 30000,
+          "translation": "强烈而耀眼的光"
+        },
+        "id": "not-a-uuid",
+        "lastReviewedAt": null,
+        "lineIndex": 0,
+        "lineText": "強く眩しい光が",
+        "mastery": "new",
+        "songArtist": "Aimer",
+        "songKey": "valid song|artist|200",
+        "songTitle": "Brave Shine",
+        "source": "desktop",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "userNote": "本地\t备注\n第二行"
+      }
+    },
+    {
+      "name": "empty songTitle",
+      "entry": {
+        "card": {
+          "endMs": 34500,
+          "index": 0,
+          "lineIndex": 0,
+          "note": "LLM 補足",
+          "original": "強く眩しい光が",
+          "points": [
+            {
+              "reading": "まぶしい",
+              "surface": "眩しい",
+              "text": "眩しい: 耀眼的",
+              "type": "vocabulary"
+            },
+            {
+              "text": "future kind falls back",
+              "type": "mystery"
+            }
+          ],
+          "startMs": 30000,
+          "translation": "强烈而耀眼的光"
+        },
+        "id": "33333333-3333-4333-8333-333333333333",
+        "lastReviewedAt": null,
+        "lineIndex": 0,
+        "lineText": "強く眩しい光が",
+        "mastery": "new",
+        "songArtist": "Aimer",
+        "songKey": "valid song|artist|200",
+        "songTitle": " ",
+        "source": "desktop",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "userNote": "本地\t备注\n第二行"
+      }
+    },
+    {
+      "name": "negative lineIndex",
+      "entry": {
+        "card": {
+          "endMs": 34500,
+          "index": 0,
+          "lineIndex": 0,
+          "note": "LLM 補足",
+          "original": "強く眩しい光が",
+          "points": [
+            {
+              "reading": "まぶしい",
+              "surface": "眩しい",
+              "text": "眩しい: 耀眼的",
+              "type": "vocabulary"
+            },
+            {
+              "text": "future kind falls back",
+              "type": "mystery"
+            }
+          ],
+          "startMs": 30000,
+          "translation": "强烈而耀眼的光"
+        },
+        "id": "33333333-3333-4333-8333-333333333333",
+        "lastReviewedAt": null,
+        "lineIndex": -1,
+        "lineText": "強く眩しい光が",
+        "mastery": "new",
+        "songArtist": "Aimer",
+        "songKey": "valid song|artist|200",
+        "songTitle": "Brave Shine",
+        "source": "desktop",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "userNote": "本地\t备注\n第二行"
+      }
+    },
+    {
+      "name": "starredAt after updatedAt",
+      "entry": {
+        "card": {
+          "endMs": 34500,
+          "index": 0,
+          "lineIndex": 0,
+          "note": "LLM 補足",
+          "original": "強く眩しい光が",
+          "points": [
+            {
+              "reading": "まぶしい",
+              "surface": "眩しい",
+              "text": "眩しい: 耀眼的",
+              "type": "vocabulary"
+            },
+            {
+              "text": "future kind falls back",
+              "type": "mystery"
+            }
+          ],
+          "startMs": 30000,
+          "translation": "强烈而耀眼的光"
+        },
+        "id": "33333333-3333-4333-8333-333333333333",
+        "lastReviewedAt": null,
+        "lineIndex": 0,
+        "lineText": "強く眩しい光が",
+        "mastery": "new",
+        "songArtist": "Aimer",
+        "songKey": "valid song|artist|200",
+        "songTitle": "Brave Shine",
+        "source": "desktop",
+        "starredAt": 3000,
+        "updatedAt": 2000,
+        "userNote": "本地\t备注\n第二行"
+      }
+    },
+    {
+      "name": "invalid source",
+      "entry": {
+        "card": {
+          "endMs": 34500,
+          "index": 0,
+          "lineIndex": 0,
+          "note": "LLM 補足",
+          "original": "強く眩しい光が",
+          "points": [
+            {
+              "reading": "まぶしい",
+              "surface": "眩しい",
+              "text": "眩しい: 耀眼的",
+              "type": "vocabulary"
+            },
+            {
+              "text": "future kind falls back",
+              "type": "mystery"
+            }
+          ],
+          "startMs": 30000,
+          "translation": "强烈而耀眼的光"
+        },
+        "id": "33333333-3333-4333-8333-333333333333",
+        "lastReviewedAt": null,
+        "lineIndex": 0,
+        "lineText": "強く眩しい光が",
+        "mastery": "new",
+        "songArtist": "Aimer",
+        "songKey": "valid song|artist|200",
+        "songTitle": "Brave Shine",
+        "source": "android",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "userNote": "本地\t备注\n第二行"
+      }
+    },
+    {
+      "name": "invalid mastery",
+      "entry": {
+        "card": {
+          "endMs": 34500,
+          "index": 0,
+          "lineIndex": 0,
+          "note": "LLM 補足",
+          "original": "強く眩しい光が",
+          "points": [
+            {
+              "reading": "まぶしい",
+              "surface": "眩しい",
+              "text": "眩しい: 耀眼的",
+              "type": "vocabulary"
+            },
+            {
+              "text": "future kind falls back",
+              "type": "mystery"
+            }
+          ],
+          "startMs": 30000,
+          "translation": "强烈而耀眼的光"
+        },
+        "id": "33333333-3333-4333-8333-333333333333",
+        "lastReviewedAt": null,
+        "lineIndex": 0,
+        "lineText": "強く眩しい光が",
+        "mastery": "later",
+        "songArtist": "Aimer",
+        "songKey": "valid song|artist|200",
+        "songTitle": "Brave Shine",
+        "source": "desktop",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "userNote": "本地\t备注\n第二行"
+      }
+    },
+    {
+      "name": "zero lastReviewedAt",
+      "entry": {
+        "card": {
+          "endMs": 34500,
+          "index": 0,
+          "lineIndex": 0,
+          "note": "LLM 補足",
+          "original": "強く眩しい光が",
+          "points": [
+            {
+              "reading": "まぶしい",
+              "surface": "眩しい",
+              "text": "眩しい: 耀眼的",
+              "type": "vocabulary"
+            },
+            {
+              "text": "future kind falls back",
+              "type": "mystery"
+            }
+          ],
+          "startMs": 30000,
+          "translation": "强烈而耀眼的光"
+        },
+        "id": "33333333-3333-4333-8333-333333333333",
+        "lastReviewedAt": 0,
+        "lineIndex": 0,
+        "lineText": "強く眩しい光が",
+        "mastery": "new",
+        "songArtist": "Aimer",
+        "songKey": "valid song|artist|200",
+        "songTitle": "Brave Shine",
+        "source": "desktop",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "userNote": "本地\t备注\n第二行"
+      }
+    },
+    {
+      "name": "invalid importMergedFrom uuid",
+      "entry": {
+        "card": {
+          "endMs": 34500,
+          "index": 0,
+          "lineIndex": 0,
+          "note": "LLM 補足",
+          "original": "強く眩しい光が",
+          "points": [
+            {
+              "reading": "まぶしい",
+              "surface": "眩しい",
+              "text": "眩しい: 耀眼的",
+              "type": "vocabulary"
+            },
+            {
+              "text": "future kind falls back",
+              "type": "mystery"
+            }
+          ],
+          "startMs": 30000,
+          "translation": "强烈而耀眼的光"
+        },
+        "id": "33333333-3333-4333-8333-333333333333",
+        "importMergedFrom": [
+          "not-a-uuid"
+        ],
+        "lastReviewedAt": null,
+        "lineIndex": 0,
+        "lineText": "強く眩しい光が",
+        "mastery": "new",
+        "songArtist": "Aimer",
+        "songKey": "valid song|artist|200",
+        "songTitle": "Brave Shine",
+        "source": "desktop",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "userNote": "本地\t备注\n第二行"
+      }
+    }
+  ],
+  "mergeCases": [
+    {
+      "name": "append note with exact separator",
+      "local": {
+        "id": "44444444-4444-4444-8444-444444444444",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "本地\t备注\n第二行",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "source": "desktop",
+        "mastery": "new",
+        "lastReviewedAt": null
+      },
+      "incoming": {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "插件备注",
+        "starredAt": 1782896400000,
+        "updatedAt": 1782984600000,
+        "source": "plugin",
+        "mastery": "new",
+        "lastReviewedAt": null
+      },
+      "importTsMs": 1782986400000
+    },
+    {
+      "name": "skip duplicate note marker",
+      "local": {
+        "id": "44444444-4444-4444-8444-444444444444",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "本地\n\n---来自 plugin（2026-07-01T00:00:00Z）---\n插件备注",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "source": "desktop",
+        "mastery": "new",
+        "lastReviewedAt": null
+      },
+      "incoming": {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "插件备注",
+        "starredAt": 1782896400000,
+        "updatedAt": 1782984600000,
+        "source": "plugin",
+        "mastery": "new",
+        "lastReviewedAt": null
+      },
+      "importTsMs": 1782986400000
+    },
+    {
+      "name": "marker only does not skip",
+      "local": {
+        "id": "44444444-4444-4444-8444-444444444444",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "我手写过 ---来自 plugin（草稿）--- 这几个字",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "source": "desktop",
+        "mastery": "new",
+        "lastReviewedAt": null
+      },
+      "incoming": {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "插件备注",
+        "starredAt": 1782896400000,
+        "updatedAt": 1782984600000,
+        "source": "plugin",
+        "mastery": "new",
+        "lastReviewedAt": null
+      },
+      "importTsMs": 1782986400000
+    },
+    {
+      "name": "note only does not skip",
+      "local": {
+        "id": "44444444-4444-4444-8444-444444444444",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "插件备注 但没有 marker",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "source": "desktop",
+        "mastery": "new",
+        "lastReviewedAt": null
+      },
+      "incoming": {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "插件备注",
+        "starredAt": 1782896400000,
+        "updatedAt": 1782984600000,
+        "source": "plugin",
+        "mastery": "new",
+        "lastReviewedAt": null
+      },
+      "importTsMs": 1782986400000
+    },
+    {
+      "name": "newer card wins",
+      "local": {
+        "id": "44444444-4444-4444-8444-444444444444",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "本地\t备注\n第二行",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "source": "desktop",
+        "mastery": "new",
+        "lastReviewedAt": null
+      },
+      "incoming": {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "导入的新卡片",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "插件备注",
+        "starredAt": 1782896400000,
+        "updatedAt": 1782990000000,
+        "source": "plugin",
+        "mastery": "new",
+        "lastReviewedAt": null
+      },
+      "importTsMs": 1782986400000
+    },
+    {
+      "name": "older card keeps local",
+      "local": {
+        "id": "44444444-4444-4444-8444-444444444444",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "本地\t备注\n第二行",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "source": "desktop",
+        "mastery": "new",
+        "lastReviewedAt": null
+      },
+      "incoming": {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "导入的旧卡片",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "插件备注",
+        "starredAt": 1782896400000,
+        "updatedAt": 1782903600000,
+        "source": "plugin",
+        "mastery": "new",
+        "lastReviewedAt": null
+      },
+      "importTsMs": 1782986400000
+    },
+    {
+      "name": "importMergedFrom dedupes incoming id",
+      "local": {
+        "id": "44444444-4444-4444-8444-444444444444",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "本地\t备注\n第二行",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "source": "desktop",
+        "importMergedFrom": [
+          "55555555-5555-4555-8555-555555555555"
+        ],
+        "mastery": "new",
+        "lastReviewedAt": null
+      },
+      "incoming": {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "插件备注",
+        "starredAt": 1782896400000,
+        "updatedAt": 1782984600000,
+        "source": "plugin",
+        "mastery": "new",
+        "lastReviewedAt": null
+      },
+      "importTsMs": 1782986400000
+    },
+    {
+      "name": "mastery both null keeps local",
+      "local": {
+        "id": "44444444-4444-4444-8444-444444444444",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "本地\t备注\n第二行",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "source": "desktop",
+        "mastery": "new",
+        "lastReviewedAt": null
+      },
+      "incoming": {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "插件备注",
+        "starredAt": 1782896400000,
+        "updatedAt": 1782984600000,
+        "source": "plugin",
+        "mastery": "new",
+        "lastReviewedAt": null
+      },
+      "importTsMs": 1782986400000
+    },
+    {
+      "name": "mastery incoming only wins",
+      "local": {
+        "id": "44444444-4444-4444-8444-444444444444",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "本地\t备注\n第二行",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "source": "desktop",
+        "mastery": "new",
+        "lastReviewedAt": null
+      },
+      "incoming": {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "插件备注",
+        "starredAt": 1782896400000,
+        "updatedAt": 1782984600000,
+        "source": "plugin",
+        "mastery": "no",
+        "lastReviewedAt": 1782990000000
+      },
+      "importTsMs": 1782986400000
+    },
+    {
+      "name": "mastery local only wins",
+      "local": {
+        "id": "44444444-4444-4444-8444-444444444444",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "本地\t备注\n第二行",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "source": "desktop",
+        "mastery": "yes",
+        "lastReviewedAt": 1782982800000
+      },
+      "incoming": {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "插件备注",
+        "starredAt": 1782896400000,
+        "updatedAt": 1782984600000,
+        "source": "plugin",
+        "mastery": "new",
+        "lastReviewedAt": null
+      },
+      "importTsMs": 1782986400000
+    },
+    {
+      "name": "mastery incoming newer wins",
+      "local": {
+        "id": "44444444-4444-4444-8444-444444444444",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "本地\t备注\n第二行",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "source": "desktop",
+        "mastery": "yes",
+        "lastReviewedAt": 1782982800000
+      },
+      "incoming": {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "插件备注",
+        "starredAt": 1782896400000,
+        "updatedAt": 1782984600000,
+        "source": "plugin",
+        "mastery": "no",
+        "lastReviewedAt": 1782990000000
+      },
+      "importTsMs": 1782986400000
+    },
+    {
+      "name": "mastery equal timestamp keeps local",
+      "local": {
+        "id": "44444444-4444-4444-8444-444444444444",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "本地\t备注\n第二行",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "source": "desktop",
+        "mastery": "meh",
+        "lastReviewedAt": 1782982800000
+      },
+      "incoming": {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "songKey": "shared song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 1,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 1,
+          "lineIndex": 1,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "插件备注",
+        "starredAt": 1782896400000,
+        "updatedAt": 1782984600000,
+        "source": "plugin",
+        "mastery": "no",
+        "lastReviewedAt": 1782982800000
+      },
+      "importTsMs": 1782986400000
+    }
+  ],
+  "importCase": {
+    "importTsMs": 1782993600000,
+    "seed": [
+      {
+        "id": "66666666-6666-4666-8666-666666666666",
+        "songKey": "merge song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 2,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 2,
+          "lineIndex": 2,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "桌面备注",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "source": "desktop",
+        "mastery": "new",
+        "lastReviewedAt": null
+      },
+      {
+        "id": "88888888-8888-4888-8888-888888888888",
+        "songKey": "skip song|artist|200",
+        "songTitle": "Brave Shine",
+        "songArtist": "Aimer",
+        "lineIndex": 4,
+        "lineText": "強く眩しい光が",
+        "card": {
+          "index": 4,
+          "lineIndex": 4,
+          "original": "強く眩しい光が",
+          "translation": "强烈而耀眼的光",
+          "points": [
+            {
+              "type": "vocabulary",
+              "text": "眩しい: 耀眼的",
+              "surface": "眩しい",
+              "reading": "まぶしい"
+            },
+            {
+              "type": "mystery",
+              "text": "future kind falls back"
+            }
+          ],
+          "note": "LLM 補足",
+          "startMs": 30000,
+          "endMs": 34500
+        },
+        "userNote": "旧备注\n\n---来自 plugin（2026-07-01T00:00:00Z）---\n重复备注",
+        "starredAt": 1782982800000,
+        "updatedAt": 1782983100000,
+        "source": "desktop",
+        "mastery": "new",
+        "lastReviewedAt": null
+      }
+    ],
+    "envelope": {
+      "entries": [
+        {
+          "card": {
+            "endMs": 34500,
+            "index": 2,
+            "lineIndex": 2,
+            "note": "LLM 補足",
+            "original": "強く眩しい光が",
+            "points": [
+              {
+                "reading": "まぶしい",
+                "surface": "眩しい",
+                "text": "眩しい: 耀眼的",
+                "type": "vocabulary"
+              },
+              {
+                "text": "future kind falls back",
+                "type": "mystery"
+              }
+            ],
+            "startMs": 30000,
+            "translation": "强烈而耀眼的光"
+          },
+          "id": "77777777-7777-4777-8777-777777777777",
+          "lastReviewedAt": null,
+          "lineIndex": 2,
+          "lineText": "強く眩しい光が",
+          "mastery": "new",
+          "songArtist": "Aimer",
+          "songKey": "merge song|artist|200",
+          "songTitle": "Brave Shine",
+          "source": "plugin",
+          "starredAt": 1782892800000,
+          "updatedAt": 1782997200000,
+          "userNote": "插件备注"
+        },
+        {
+          "card": {
+            "endMs": 34500,
+            "index": 0,
+            "lineIndex": 0,
+            "note": "LLM 補足",
+            "original": "強く眩しい光が",
+            "points": [
+              {
+                "reading": "まぶしい",
+                "surface": "眩しい",
+                "text": "眩しい: 耀眼的",
+                "type": "vocabulary"
+              },
+              {
+                "text": "future kind falls back",
+                "type": "mystery"
+              }
+            ],
+            "startMs": 30000,
+            "translation": "强烈而耀眼的光"
+          },
+          "id": "abcdefab-cdef-4abc-8def-abcdefabcdef",
+          "lastReviewedAt": null,
+          "lineIndex": 0,
+          "lineText": "強く眩しい光が",
+          "mastery": "new",
+          "songArtist": "Aimer",
+          "songKey": "fresh song|artist|321",
+          "songTitle": "Brave Shine",
+          "source": "plugin",
+          "starredAt": 1782983400000,
+          "updatedAt": 1782983700000,
+          "userNote": "本地\t备注\n第二行"
+        },
+        {
+          "card": {
+            "endMs": 34500,
+            "index": 4,
+            "lineIndex": 4,
+            "note": "LLM 補足",
+            "original": "強く眩しい光が",
+            "points": [
+              {
+                "reading": "まぶしい",
+                "surface": "眩しい",
+                "text": "眩しい: 耀眼的",
+                "type": "vocabulary"
+              },
+              {
+                "text": "future kind falls back",
+                "type": "mystery"
+              }
+            ],
+            "startMs": 30000,
+            "translation": "强烈而耀眼的光"
+          },
+          "id": "12121212-3434-4567-8567-909090909090",
+          "lastReviewedAt": null,
+          "lineIndex": 4,
+          "lineText": "強く眩しい光が",
+          "mastery": "new",
+          "songArtist": "Aimer",
+          "songKey": "skip song|artist|200",
+          "songTitle": "Brave Shine",
+          "source": "plugin",
+          "starredAt": 1782982800000,
+          "updatedAt": 1782983100000,
+          "userNote": "重复备注"
+        },
+        {
+          "card": {
+            "endMs": 34500,
+            "index": 9,
+            "lineIndex": 9,
+            "note": "LLM 補足",
+            "original": "強く眩しい光が",
+            "points": [
+              {
+                "reading": "まぶしい",
+                "surface": "眩しい",
+                "text": "眩しい: 耀眼的",
+                "type": "vocabulary"
+              },
+              {
+                "text": "future kind falls back",
+                "type": "mystery"
+              }
+            ],
+            "startMs": 30000,
+            "translation": "强烈而耀眼的光"
+          },
+          "id": "not-a-uuid",
+          "lastReviewedAt": null,
+          "lineIndex": 9,
+          "lineText": "強く眩しい光が",
+          "mastery": "new",
+          "songArtist": "Aimer",
+          "songKey": "bad song|artist|100",
+          "songTitle": "Brave Shine",
+          "source": "plugin",
+          "starredAt": 1782982800000,
+          "updatedAt": 1782983100000,
+          "userNote": "本地\t备注\n第二行"
+        }
+      ],
+      "exportedAt": "2026-07-02T11:00:00Z",
+      "exportedFrom": "plugin",
+      "schema": "lyriclens.notebook.v1"
+    }
+  }
+}
