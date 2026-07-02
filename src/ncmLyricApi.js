@@ -115,12 +115,23 @@
   // same cookies, same rate budget as the lyric fallback above.
 
   const NCM_DETAIL_API_BASE = "https://music.163.com/api/song/detail";
+  const NCM_DETAIL_API_V3_BASE = "https://music.163.com/api/v3/song/detail";
 
+  // Two endpoint generations, tried in order. os=osx mirrors the lyric
+  // endpoint's proven recipe — without it the v1 endpoint has been seen
+  // to 404 on the desktop client's cookie jar.
   function buildDetailApiUrl(songId) {
     if (songId === null || songId === undefined) return null;
     const normalized = String(songId).trim();
     if (!PURE_DIGITS_RE.test(normalized)) return null;
-    return `${NCM_DETAIL_API_BASE}?ids=[${normalized}]`;
+    return `${NCM_DETAIL_API_BASE}?os=osx&ids=[${normalized}]`;
+  }
+
+  function buildDetailApiV3Url(songId) {
+    if (songId === null || songId === undefined) return null;
+    const normalized = String(songId).trim();
+    if (!PURE_DIGITS_RE.test(normalized)) return null;
+    return `${NCM_DETAIL_API_V3_BASE}?os=osx&c=[{"id":${normalized}}]`;
   }
 
   // Normalize either detail shape (v1: artists/duration, v3: ar/dt)
@@ -144,58 +155,67 @@
     return { title, artist, durationMs };
   }
 
-  // Returns {title, artist, durationMs} or null when the song can't be
-  // resolved. Throws on network/timeout/HTTP errors like the lyric path.
-  async function fetchSongDetail(songId, options = {}) {
-    const url = buildDetailApiUrl(songId);
-    if (!url) return null;
-    const fetcher = options.fetchImpl || root.fetch;
-    if (typeof fetcher !== "function") return null;
-
-    const timeoutMs = Number.isFinite(Number(options.timeoutMs))
-      ? Number(options.timeoutMs)
-      : DEFAULT_TIMEOUT_MS;
+  async function fetchDetailFromUrl(url, fetcher, timeoutMs) {
     const controller = new AbortController();
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
       controller.abort();
     }, timeoutMs);
-
     try {
       const response = await fetcher(url, {
         method: "GET",
         credentials: "include",
         signal: controller.signal
       });
-      if (!response.ok) {
-        const err = new Error(`NCM detail API HTTP ${response.status}`);
-        err.name = "NcmDetailApiHttpError";
-        err.status = response.status;
-        throw err;
-      }
+      if (!response.ok) return { meta: null, status: `HTTP ${response.status}` };
       const data = await response.json();
-      if (data?.code !== 200) return null;
+      if (data?.code !== 200) return { meta: null, status: `code ${data?.code}` };
       const song = Array.isArray(data.songs) ? data.songs[0] : null;
-      return normalizeSongDetail(song);
+      const meta = normalizeSongDetail(song);
+      return { meta, status: meta ? "ok" : "unrecognized shape" };
     } catch (err) {
-      if (timedOut) {
-        const tErr = new Error(`NCM detail API timeout after ${timeoutMs}ms`);
-        tErr.name = "NcmDetailApiTimeout";
-        throw tErr;
-      }
-      throw err;
+      return { meta: null, status: timedOut ? `timeout ${timeoutMs}ms` : String(err?.message || err) };
     } finally {
       clearTimeout(timer);
     }
   }
 
+  // Returns {title, artist, durationMs} or null when neither endpoint
+  // generation resolves the song. Never throws — per-endpoint failures
+  // are collected and logged so an on-device console shows exactly
+  // which generation (if any) is alive on this NCM build.
+  async function fetchSongDetail(songId, options = {}) {
+    const fetcher = options.fetchImpl || root.fetch;
+    if (typeof fetcher !== "function") return null;
+    const timeoutMs = Number.isFinite(Number(options.timeoutMs))
+      ? Number(options.timeoutMs)
+      : DEFAULT_TIMEOUT_MS;
+
+    const attempts = [];
+    for (const [label, url] of [
+      ["v1", buildDetailApiUrl(songId)],
+      ["v3", buildDetailApiV3Url(songId)]
+    ]) {
+      if (!url) continue;
+      const { meta, status } = await fetchDetailFromUrl(url, fetcher, timeoutMs);
+      if (meta) return meta;
+      attempts.push(`${label}: ${status}`);
+    }
+    if (attempts.length) {
+      console.warn("[LyricLens:notebook]", `song/detail 两代端点都没拿到 meta（songId=${songId}）`, attempts.join(" | "));
+    }
+    return null;
+  }
+
   const api = {
     NCM_LYRIC_API_BASE,
     NCM_DETAIL_API_BASE,
+    NCM_DETAIL_API_V3_BASE,
     DEFAULT_TIMEOUT_MS,
     buildLyricApiUrl,
     buildDetailApiUrl,
+    buildDetailApiV3Url,
     normalizeSongDetail,
     fetchLyricsForSongId,
     fetchSongDetail
