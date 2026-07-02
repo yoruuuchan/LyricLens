@@ -13,6 +13,28 @@ tag 含义：`[plan]` 路线决策 / `[probe]` probe 结果 / `[ship]` 产品功
 
 ---
 
+## 2026-07-02 [ship] 插件版笔记本 + mastery 上线 — 四件套双 host 收官
+
+插件版笔记本 vertical 一个 session 从 plan 到真机验收收官：IDB store + star + 备注 + JSON/Anki 导出 + JSON 导入合并 + mastery 四色 dot（[#26](https://github.com/yoruuuchan/LyricLens/pull/26)/[#27](https://github.com/yoruuuchan/LyricLens/pull/27)/[#28](https://github.com/yoruuuchan/LyricLens/pull/28)）→ 部署 NCM → 星标按钮真机三轮修复（[#29](https://github.com/yoruuuchan/LyricLens/pull/29)/[#30](https://github.com/yoruuuchan/LyricLens/pull/30)/[#31](https://github.com/yoruuuchan/LyricLens/pull/31)）→ **真机验收通过（Yoru 确认）**。至此四件套（词库三件套 + 笔记本）双 host 全部落地，插件↔桌面数据经 JSON import/export 互通。
+
+- **[#26](https://github.com/yoruuuchan/LyricLens/pull/26) store + 纯逻辑层**：`src/notebook.js` 单文件双层。纯逻辑层跨 host 语义逐字对齐桌面版 notebook.rs——makeSongKey / 合并 8 条（userNote separator + 三 AND skip / card 取 updatedAt 晚者 / starredAt 取早 / mastery 按 lastReviewedAt 独立联动）/ envelope 秒精度 + starredAt DESC / Anki TSV 转义与 label 表 / schema 不符硬报错。store 层 IDB `lyriclens-notebook` v1 + 内存双 Map 镜像（render 同步查询），降级不炸面板（照 dicts.js 姿势）；`crypto.randomUUID` 要 Chromium 92 → getRandomValues 手写 uuid v4。桌面形状 round-trip fixture 进测试。
+- **[#27](https://github.com/yoruuuchan/LyricLens/pull/27)/[#28](https://github.com/yoruuuchan/LyricLens/pull/28) UI + 导出导入**：panel 笔记本视图（titlebar 书本按钮与设置互斥 / toolbar 条数 + 导出 JSON/Anki + 导入 + 批量选择 / entry 三段式 + mastery 四色 dot read-only / inline 备注编辑 / 两步武装批量删除——NCM 里 window.confirm 不可靠）；card.js star slot 两阶段 hydration；导出走 `betterncm.fs.writeFile` 到 `getDataPath()/lyriclens-exports/`，导入 `input[type=file]` + FileReader。**踩坑：stacked PR 的 base 指着 feature 分支，#27 merge 进了分支而非 main，#28 catch-up 捞回**——merge 前必查 base。
+- **星标三轮修复 = 本 session 最大技术故事**（每轮靠真机 console 日志定位）：
+  1. [#29](https://github.com/yoruuuchan/LyricLens/pull/29)：detail API 404 → `os=osx` + v1→v3 fallback + 永不 throw；星标按钮 24→32px（Yoru 嫌小）
+  2. [#30](https://github.com/yoruuuchan/LyricLens/pull/30)：日志显示点击到了但"拿不到歌曲信息"且无端点告警 → **songId 全线 null**（本地文件播放 + PlayState 死 + getPlaying() 抛 + capture 只有指纹 id）→ 解析链倒转为 id-free：mediaSession → playbar DOM → slider max 时长，detail API 降级为补缺件；星标渲染态 `currentNotebookSongKey()` 每 render 现算
+  3. [#31](https://github.com/yoruuuchan/LyricLens/pull/31)：mediaSession 实测也空（NCM 原生喂 SMTC 不走 renderer API）、猜的选择器全 miss → **改打法：console 侦察脚本两轮拿真实 DOM**，corona 结构一发定位——歌名 `footer .title-container .main-title .title`（钻到 .title 层避开 VIP tag 文本）、歌手 `.author` textContent 天然 " / " 分隔 **= NCM 喂 SMTC 同分隔符 = 跨 host songKey 字节对齐白送**；埋点 `#page_pc_mini_bar[data-log]` 挖出 `s_cid` 云端 id（本地文件被 NCM 匹配云曲库后也有）→ `readMiniBarSongId` 喂 detail-API 兜底
+- **corona (NCM 3.x) 平台知识沉淀**：mediaSession.metadata 空 / document.title 只有「网易云音乐」/ getPlayingSong() 返 null / PlayState 死 / **slider max（秒）是唯一常活的播放面** / data-log 埋点是唯一活的数字 id 源
+- 测试 349 → **401 全绿**（notebook 逻辑+store+IO / ncm-detail 双代端点 / card star slot / panel notebook 视图+忙锁 / sync id-free 读数 + s_cid 解析）
+- 方法论教训：盲猜选择器两轮全 miss，**第三轮先侦察后开枪**（一键 console 脚本让 Yoru 贴回 DOM 快照）一发命中——NCM 这种黑盒 DOM 以后一律先拍照再写选择器
+
+附加事件：开场清了 session 9 的 progress 补记双 PR（主 [#25](https://github.com/yoruuuchan/LyricLens/pull/25) + 桌面 [#39](https://github.com/yoruuuchan/lyriclens-desktop/pull/39)，均 merged）。
+
+下一步：
+- 跨 host 互通深度验证：插件导出→桌面导入、桌面导出→插件导入、两端 star 同一首歌对比 songKey（插件侧 " / " 分隔已与 SMTC 对齐，理论字节一致，补实测更稳）
+- roadmap README 阶段地图刷新（spawn_task 卡片挂着）
+- 桌面版 aria-hidden 焦点告警修复（chip 挂着）
+- 雅思/托福 community 弱标签（优先级最低）
+
 ## 2026-07-02 [ship] 插件版词库三件套上线 — JLPT + enexam + CEFR-J badge 进 NCM
 
 插件版词库三件套一个 session 从 plan 到部署验收收官：数据通道选型 → 管道 gz 变体（[#23](https://github.com/yoruuuchan/LyricLens/pull/23)）→ Worker allowlist（桌面 [#38](https://github.com/yoruuuchan/lyriclens-desktop/pull/38)）→ 插件全套（[#24](https://github.com/yoruuuchan/LyricLens/pull/24)，349 测试全绿）→ KV 发布 + CDN 冒烟 → 插件部署 NCM → **真机验收 8 步全过（Yoru 确认）**。四件套的词库半场闭环，桌面/插件双 host 词库体验对齐。
