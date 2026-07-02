@@ -277,43 +277,45 @@
     return { outcome: "merged", entry: merged };
   }
 
-  // Serialize one entry with the same key order as desktop's struct so
-  // pretty-printed exports diff cleanly across hosts. Omission rules
-  // mirror serde: importMergedFrom/surface/reading drop when absent;
-  // startMs/endMs stay as explicit nulls.
+  // Serialize one entry with the same key order as desktop's current
+  // serde_json golden so pretty-printed exports diff cleanly across
+  // hosts. Omission rules mirror serde: importMergedFrom/surface/
+  // reading drop when absent; startMs/endMs stay as explicit nulls.
   function serializeEntry(entry) {
     const out = {
-      id: entry.id,
-      songKey: entry.songKey,
-      songTitle: entry.songTitle,
-      songArtist: entry.songArtist,
-      lineIndex: entry.lineIndex,
-      lineText: entry.lineText,
       card: {
+        endMs: entry.card.endMs ?? null,
         index: entry.card.index,
         lineIndex: entry.card.lineIndex,
+        note: entry.card.note,
         original: entry.card.original,
-        translation: entry.card.translation,
         points: entry.card.points.map((p) => {
-          const point = { type: p.type, text: p.text };
-          if (typeof p.surface === "string") point.surface = p.surface;
+          const point = {};
           if (typeof p.reading === "string") point.reading = p.reading;
+          if (typeof p.surface === "string") point.surface = p.surface;
+          point.text = p.text;
+          point.type = p.type;
           return point;
         }),
-        note: entry.card.note,
         startMs: entry.card.startMs ?? null,
-        endMs: entry.card.endMs ?? null
+        translation: entry.card.translation
       },
-      userNote: entry.userNote,
-      starredAt: entry.starredAt,
-      updatedAt: entry.updatedAt,
-      source: entry.source
+      id: entry.id
     };
     if (Array.isArray(entry.importMergedFrom)) {
       out.importMergedFrom = entry.importMergedFrom.slice();
     }
-    out.mastery = entry.mastery;
     out.lastReviewedAt = entry.lastReviewedAt ?? null;
+    out.lineIndex = entry.lineIndex;
+    out.lineText = entry.lineText;
+    out.mastery = entry.mastery;
+    out.songArtist = entry.songArtist;
+    out.songKey = entry.songKey;
+    out.songTitle = entry.songTitle;
+    out.source = entry.source;
+    out.starredAt = entry.starredAt;
+    out.updatedAt = entry.updatedAt;
+    out.userNote = entry.userNote;
     return out;
   }
 

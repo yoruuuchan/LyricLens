@@ -1,0 +1,75 @@
+{
+  "entries": [
+    {
+      "card": {
+        "endMs": 34500,
+        "index": 3,
+        "lineIndex": 3,
+        "note": "LLM 補足",
+        "original": "強く眩しい光が",
+        "points": [
+          {
+            "reading": "まぶしい",
+            "surface": "眩しい",
+            "text": "眩しい: 耀眼的",
+            "type": "vocabulary"
+          },
+          {
+            "text": "future kind falls back",
+            "type": "mystery"
+          }
+        ],
+        "startMs": 30000,
+        "translation": "强烈而耀眼的光"
+      },
+      "id": "11111111-2222-4333-8444-555555555555",
+      "importMergedFrom": [
+        "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+      ],
+      "lastReviewedAt": 1782981000000,
+      "lineIndex": 3,
+      "lineText": "強く眩しい光が",
+      "mastery": "meh",
+      "songArtist": "Aimer",
+      "songKey": "brave shine|aimer|234",
+      "songTitle": "Brave Shine",
+      "source": "desktop",
+      "starredAt": 1782982800000,
+      "updatedAt": 1782983100000,
+      "userNote": "本地\t备注\n第二行"
+    },
+    {
+      "card": {
+        "endMs": null,
+        "index": 7,
+        "lineIndex": 7,
+        "note": "",
+        "original": "写真は苦手なんだ",
+        "points": [
+          {
+            "surface": "なんだ",
+            "text": "なんだ: 解释语气",
+            "type": "grammar"
+          }
+        ],
+        "startMs": null,
+        "translation": "我不太擅长拍照"
+      },
+      "id": "99999999-8888-4777-8666-555555555555",
+      "lastReviewedAt": 1782975600000,
+      "lineIndex": 7,
+      "lineText": "写真は苦手なんだ",
+      "mastery": "yes",
+      "songArtist": "宇多田ヒカル",
+      "songKey": "one last kiss|宇多田ヒカル|252",
+      "songTitle": "One Last Kiss",
+      "source": "plugin",
+      "starredAt": 1782907200000,
+      "updatedAt": 1782909000000,
+      "userNote": ""
+    }
+  ],
+  "exportedAt": "2026-07-02T08:00:00Z",
+  "exportedFrom": "desktop",
+  "schema": "lyriclens.notebook.v1"
+}
