@@ -959,6 +959,89 @@
     return { action: "fire" };
   }
 
+  // ── Now-playing metadata (notebook songKey) ─────────────────────
+  //
+  // Title/artist/duration WITHOUT a songId — on this build the id
+  // signals are unreliable (PlayState dead, getPlaying throws, the
+  // AMLL warning hook gets clobbered), so the notebook resolves song
+  // identity from what's actually on screen.
+
+  // The track duration in ms from the progress slider's max attribute
+  // (seconds) — the same slider startProgressDurationMonitor polls,
+  // which has proven to be the one always-alive playback surface.
+  function readTrackDurationMs(context = root) {
+    const slider = findNcmProgressSlider(context);
+    if (!slider) return null;
+    const raw = slider.getAttribute?.("max") ?? slider.max;
+    const durationSec = Number(raw);
+    if (!Number.isFinite(durationSec) || durationSec <= 5) return null;
+    return Math.round(durationSec * 1000);
+  }
+
+  // Playbar DOM probes, broadest-net ordering. Legacy NCM 2.x class
+  // names first (webapp91x64 is the 2.x-era shell), generic
+  // substring probes after. Every hit is reported by the caller's
+  // diagnostics so a miss round returns real selector intel.
+  const PLAYBAR_TITLE_SELECTORS = [
+    ".m-playbar .name",
+    ".m-playbar .j-title",
+    ".m-playbar .words .name",
+    '[class*="playbar"] [class*="title"]',
+    '[class*="playbar"] [class*="name"]',
+    ".btmbar .name"
+  ];
+  const PLAYBAR_ARTIST_SELECTORS = [
+    ".m-playbar .by",
+    ".m-playbar .words .by",
+    '[class*="playbar"] [class*="artist"]',
+    '[class*="playbar"] [class*="singer"]',
+    ".btmbar .artist"
+  ];
+
+  function readPlaybarText(context, selectors) {
+    const doc = context?.document;
+    if (!doc?.querySelector) return null;
+    for (const sel of selectors) {
+      let node = null;
+      try {
+        node = doc.querySelector(sel);
+      } catch (_) {
+        continue;
+      }
+      const text = String(node?.textContent ?? "").trim();
+      // Reject clock-like strings (03:24) that share containers with
+      // the title in some layouts.
+      if (text && !/^\d{1,2}:\d{2}(\s*\/\s*\d{1,2}:\d{2})?$/.test(text)) {
+        return { text, selector: sel };
+      }
+    }
+    return null;
+  }
+
+  // {title, artist, source} or null. Order:
+  //   1. navigator.mediaSession.metadata — the very object NCM feeds
+  //      Windows SMTC from, i.e. byte-identical to what the desktop
+  //      host sees → cross-host songKey parity for free.
+  //   2. Playbar DOM probes.
+  function readNowPlayingMeta(context = root) {
+    try {
+      const md = context?.navigator?.mediaSession?.metadata;
+      const title = String(md?.title ?? "").trim();
+      const artist = String(md?.artist ?? "").trim();
+      if (title && artist) return { title, artist, source: "mediaSession" };
+    } catch (_) {}
+    const title = readPlaybarText(context, PLAYBAR_TITLE_SELECTORS);
+    const artist = readPlaybarText(context, PLAYBAR_ARTIST_SELECTORS);
+    if (title?.text && artist?.text) {
+      return {
+        title: title.text,
+        artist: artist.text,
+        source: `dom(${title.selector} + ${artist.selector})`
+      };
+    }
+    return null;
+  }
+
   // Poll NCM's progress-bar <input>.max — the track duration in seconds —
   // and fire onDurationChange whenever it shifts by more than 1 second.
   // This is our song-change signal of last resort: PlayState is dead, the
@@ -1067,7 +1150,9 @@
     installAmllWarningProbe,
     parseAmllProgressJump,
     startProgressDurationMonitor,
-    classifyDurationChange
+    classifyDurationChange,
+    readTrackDurationMs,
+    readNowPlayingMeta
   };
 
   root.LyricLens = root.LyricLens || {};
