@@ -13,6 +13,28 @@ tag 含义：`[plan]` 路线决策 / `[probe]` probe 结果 / `[ship]` 产品功
 
 ---
 
+## 2026-07-02 [ship] 插件版词库三件套上线 — JLPT + enexam + CEFR-J badge 进 NCM
+
+插件版词库三件套一个 session 从 plan 到部署验收收官：数据通道选型 → 管道 gz 变体（[#23](https://github.com/yoruuuchan/LyricLens/pull/23)）→ Worker allowlist（桌面 [#38](https://github.com/yoruuuchan/lyriclens-desktop/pull/38)）→ 插件全套（[#24](https://github.com/yoruuuchan/LyricLens/pull/24)，349 测试全绿）→ KV 发布 + CDN 冒烟 → 插件部署 NCM → **真机验收 8 步全过（Yoru 确认）**。四件套的词库半场闭环，桌面/插件双 host 词库体验对齐。
+
+- **数据通道核心决策：gzip 变体**。实测 CF 返回裸 brotli 字节、无 Content-Encoding（Worker 设的 header 被 CF 归一化吃掉——桌面 Rust 正是靠这个拿原始字节做 sha256）→ 浏览器不自动解压；NCM Chromium 91 的 `DecompressionStream` 仅支持 gzip/deflate；插件无 bundler，vendor WASM brotli 库丑。弃选 Worker `encodeBody: manual`（CF 转码行为不确定 + 可能打坏桌面版）。结论：**给插件走 `.json.gz` 平行变体，`.br` 归桌面版零改动**。
+- **[#23](https://github.com/yoruuuchan/LyricLens/pull/23) 管道 gz 变体**：三管道 `gzipSync(level 9)` 写 `.json.gz` + manifest `sources.<build>.gzip = {url, sha256, bytes}`（additive 不 bump schema）。gzip 输出确定性实测（固定 `--generated-at` 重跑 sha 逐字节一致）。尺寸 jlpt 77.1KB / enexam 29.2KB / cefrj 26.9KB。三个 schema doc 的 KV 段补 gz 说明。
+- **[#24](https://github.com/yoruuuchan/LyricLens/pull/24) 插件全套**，两 commit：
+  1. `src/dicts.js`：manifest → gz 裸字节 → sha256（crypto.subtle 照 updater.js 先例，不可用 warn+跳过）→ `DecompressionStream("gzip")`（feature detect，缺失降级）→ 结构校验 → 内存 Map。lookup 语义逐条对齐桌面 Rust（jlpt 两级 surface/reading + source-surface 降级 `*` 号 / enexam 全 tags / cefrj level-or-null）。MVP 无持久缓存（NCM 常驻，每启动拉 ~130KB）。任何失败 → 该 family 空 store → 无 badge，插件其余零影响。
+  2. **PROMPT_VERSION v3→v4**：vocabulary/grammar point 加 surface/reading（措辞照抄桌面 analysis.ts）；normalizePoints 只在这两 type 接受、缺失容忍。card.js 渲染三 badge slot + `hydrateDictBadges` 同步填充；**插件 panel 每次 render 全量重建 DOM，换 targetExam = 重渲染重标，不需要桌面版的 `data-applied-exam` 重扫机制**（架构差异带来的简化）。settings 加 `targetExam`（off/gaokao/cet4/cet6/kaoyan，默认 off）；About 加「词库与致谢」三段（citation 措辞照 schema doc 硬规则）。测试 336 → **349 全绿**，gzip/sha256 路径真跑（Node 全局 API）。
+- **KV 发布的惊喜：锚定时间戳可逐字节复现线上 br**。jlpt/cefrj 用 `--generated-at=<线上 generated_at>` 重跑，br 输出与线上 sha 全同 → 管道 manifest 直接就是"线上版 + gzip 字段"，无需手工合成。发布顺序 blob → 60s → manifest；enexam 整套新 build `multi-20260702`，jlpt/cefrj 只传 gz + manifest（**br blob 没动——同名 blob 永不重传**，immutable 边缘缓存会导致 manifest/blob sha 不配套打坏桌面版）。
+- **CDN 冒烟全绿**（一律带 `?fresh=` cache-buster）：三 family gz sha256 对表 / entries 8138·6734·7017 / 抽查 挨拶→N3、abandon→[gaokao,cet4,kaoyan]、above+café→A1、according to→B1 / gz 解压载荷与线上 br 逐字节一致。
+- **真机验收 8 步全过**：三 family ready 无报错 / 英文 CEFR badge + Tono Lab tooltip / targetExam 选 CET-4 已渲染卡片即时出 pill（不重新分析）/ 换考研重标、关闭全消 / 日文 JLPT badge（reading 未证带 `*`）/ About 三段致谢 / 断网重启无 badge 无报错优雅降级 / v4 缓存失效重分析预期内。
+
+踩坑（已写 memory `dicts-cdn-publish`）：**发布前禁止裸 URL 读 manifest**（1h 边缘缓存 re-cache，token 无 Purge 权限救不回，验证一律带 cache-buster）；smoke.test.js 校验的是**本地构建的 .plugin**（加新 inject 文件后先 `npm run build` 再 `npm test`）；CF 会吃掉 Worker 的 Content-Encoding header 返回裸字节——给 `.gz` 设了反而炸（插件 sha256 需要压缩字节），Worker 里已写注释。
+
+附加事件：开场清了 session 8 遗留的 progress 补记双 PR（主 [#22](https://github.com/yoruuuchan/LyricLens/pull/22) + 桌面 [#37](https://github.com/yoruuuchan/lyriclens-desktop/pull/37)，均 merged）。
+
+下一步：
+- 插件版笔记本 + mastery（四件套的另一半）：IDB store + star + 备注 + 导出导入 + mastery 四色，独立大 vertical 专门 session
+- roadmap README 阶段地图刷新（Task #5 词库 CDN 还标 ⏳）
+- 雅思/托福 community 弱标签（优先级最低）
+
 ## 2026-07-02 [ship] CEFR-J 参考等级词库全链路上线 — 决策 #12 双语收官
 
 CEFR-J vertical 一个 session 从 0 到收官：侦察 → 管道 + schema doc（[#20](https://github.com/yoruuuchan/LyricLens/pull/20)）→ Yoru 拍板两个决策点 → doc 转 locked（[#21](https://github.com/yoruuuchan/LyricLens/pull/21)）→ 桌面 badge（桌面 [#36](https://github.com/yoruuuchan/lyriclens-desktop/pull/36)）→ KV 上传 → CDN 冒烟全绿。**决策 #12（MVP 词库 = CEFR-J 英 + JLPT 日）到此双语全部落地。**
