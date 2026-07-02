@@ -351,8 +351,14 @@
         // resolving — getPlayingSong may lag a fast song switch.
         const liveId = String(song?.id ?? raw?.id ?? "");
         if (normalized && (!liveId || liveId === String(songId))) resolved = normalized;
-      } catch (_) {
+        else if (song && typeof song === "object") {
+          // Shape diagnostics: which keys does this build actually
+          // expose? One console line beats a blind guessing round.
+          console.log("[LyricLens:notebook]", "getPlayingSong 形状不认识（keys）", Object.keys(song).slice(0, 20).join(","));
+        }
+      } catch (err) {
         // getPlayingSong throwing is expected on this build.
+        console.log("[LyricLens:notebook]", "getPlayingSong 不可用", String(err?.message || err));
       }
       if (!resolved && NcmLyricApi?.fetchSongDetail) {
         resolved = await NcmLyricApi.fetchSongDetail(songId);
@@ -379,11 +385,14 @@
   // business key. The panel marks the line busy for the duration and
   // re-renders afterwards; store failures just warn.
   async function handleStarToggle(card, lineIndex) {
+    // Always log the click itself: "button does nothing" reports then
+    // split cleanly into click-never-arrived vs metadata-missing.
+    console.log("[LyricLens:notebook]", "star toggle", { lineIndex, songId: currentSongId });
     if (!Notebook?.isReady?.()) return;
     const songId = currentSongId;
     const meta = await resolveNotebookSongMeta(songId);
     if (!meta || !meta.songKey) {
-      Utils.warn("拿不到当前歌曲信息（标题/歌手/时长），这次收藏没有成功");
+      console.warn("[LyricLens:notebook]", "拿不到当前歌曲信息（标题/歌手/时长），这次收藏没有成功", { songId });
       return;
     }
     if (songId !== currentSongId) return; // song flipped mid-resolve
