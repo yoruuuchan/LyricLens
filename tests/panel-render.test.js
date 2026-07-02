@@ -68,6 +68,7 @@ function createFakeDocument() {
       if (name === "id") this.id = String(value);
     }
     addEventListener(type, handler) { this.eventListeners[type] = handler; }
+    click() { this.eventListeners.click?.({ stopPropagation: () => {}, preventDefault: () => {} }); }
     contains(node) {
       let cur = node;
       while (cur) { if (cur === this) return true; cur = cur.parentNode; }
@@ -713,6 +714,50 @@ test("notebook view degrades gracefully when the store failed", () => {
     const panelNode = document.querySelector(".ll-panel");
     panelNode.querySelector(".ll-notebook-button").eventListeners.click();
     assert.match(panelNode.querySelector(".ll-notebook").textContent, /笔记本存储不可用/);
+  });
+});
+
+test("notebook toolbar exports via the store and shows the result line", async () => {
+  await withPanelHarnessAsync(async ({ document, createPanel }) => {
+    const entry = makeNotebookEntryFixture();
+    const fakeNotebook = makeFakeNotebook([entry]);
+    const exportCalls = [];
+    fakeNotebook.exportToFile = async (format) => {
+      exportCalls.push(format);
+      return { ok: true, path: "C:/betterncm/lyriclens-exports/x.json", count: 1 };
+    };
+    fakeNotebook.importFromText = () => ({ ok: true, summary: { imported: 0, merged: 0, skipped: 0, errors: [] } });
+    globalThis.LyricLens.Notebook = fakeNotebook;
+
+    const panel = createPanel({ settings: {}, isDebugEnabled: () => false });
+    panel.showCard({ language: "ja", cards: [], cardsByIndex: new Map([[0, {}]]) }, 0);
+    const panelNode = document.querySelector(".ll-panel");
+    panelNode.querySelector(".ll-notebook-button").eventListeners.click();
+
+    const findButton = (label) =>
+      panelNode.querySelectorAll(".ll-ghost-button").find((b) => b.textContent === label);
+    assert.ok(findButton("导出 JSON"), "export json button present");
+    assert.ok(findButton("导出 Anki"), "export anki button present");
+    assert.ok(findButton("导入"), "import button present");
+
+    findButton("导出 JSON").eventListeners.click();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(exportCalls, ["json"]);
+    const status = panelNode.querySelector(".ll-nb-status");
+    assert.match(status.textContent, /已导出 1 条 · C:\/betterncm/);
+    assert.ok(!status.classList.values.has("ll-is-error"));
+
+    // Import button creates a detached file input; clicking it in the
+    // fake DOM (no change event) must be a no-op, not a crash.
+    findButton("导入").eventListeners.click();
+
+    // Export failure path renders the error style.
+    fakeNotebook.exportToFile = async () => ({ ok: false, error: "disk full" });
+    findButton("导出 Anki").eventListeners.click();
+    await new Promise((resolve) => setImmediate(resolve));
+    const errorStatus = panelNode.querySelector(".ll-nb-status");
+    assert.match(errorStatus.textContent, /导出失败：disk full/);
+    assert.ok(errorStatus.classList.values.has("ll-is-error"));
   });
 });
 

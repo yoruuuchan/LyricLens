@@ -667,6 +667,135 @@ test("importEntries materializes v1 defaults (missing mastery fields)", async ()
   }
 });
 
+// ── file I/O (export to disk / import from text) ────────────────────
+
+test("buildExportFilename uses local date and format extension", () => {
+  const { Notebook, restore } = freshNotebook();
+  try {
+    const nowMs = new Date(2026, 6, 2, 15, 30, 0).getTime(); // local time
+    assert.equal(Notebook.buildExportFilename("json", nowMs), "lyriclens-notebook-2026-07-02.json");
+    assert.equal(Notebook.buildExportFilename("anki", nowMs), "lyriclens-notebook-2026-07-02.tsv");
+  } finally {
+    restore();
+  }
+});
+
+function makeFakeBetterncm({ dataPath = "C:/betterncm", failWrite = false } = {}) {
+  const calls = { mkdir: [], writeFile: [] };
+  return {
+    calls,
+    app: { getDataPath: async () => dataPath },
+    fs: {
+      mkdir: async (dir) => { calls.mkdir.push(dir); },
+      writeFile: async (path, content) => {
+        if (failWrite) throw new Error("disk full");
+        calls.writeFile.push([path, content]);
+      }
+    }
+  };
+}
+
+test("exportToFile writes the pretty envelope into <dataPath>/lyriclens-exports", async () => {
+  const { Notebook, restore } = freshNotebook();
+  try {
+    Notebook._setPersistenceForTest(makeFakePersistence([makeEntry()]));
+    await Notebook.bootstrap();
+    const fake = makeFakeBetterncm();
+    const nowMs = Date.UTC(2026, 6, 2, 8, 0, 0);
+    const result = await Notebook.exportToFile("json", { betterncm: fake, nowMs });
+    assert.equal(result.ok, true);
+    assert.equal(result.count, 1);
+    assert.match(result.path, /^C:\/betterncm\/lyriclens-exports\/lyriclens-notebook-\d{4}-\d{2}-\d{2}\.json$/);
+    assert.deepEqual(fake.calls.mkdir, ["C:/betterncm/lyriclens-exports"]);
+    assert.equal(fake.calls.writeFile.length, 1);
+    const written = fake.calls.writeFile[0][1];
+    const text = typeof written === "string" ? written : await written.text();
+    const parsed = JSON.parse(text);
+    assert.equal(parsed.schema, "lyriclens.notebook.v1");
+    assert.equal(parsed.exportedFrom, "plugin");
+    assert.equal(parsed.entries.length, 1);
+  } finally {
+    restore();
+  }
+});
+
+test("exportToFile anki format writes TSV rows", async () => {
+  const { Notebook, restore } = freshNotebook();
+  try {
+    Notebook._setPersistenceForTest(makeFakePersistence([makeEntry()]));
+    await Notebook.bootstrap();
+    const fake = makeFakeBetterncm();
+    const result = await Notebook.exportToFile("anki", { betterncm: fake });
+    assert.equal(result.ok, true);
+    assert.match(result.path, /\.tsv$/);
+    const written = fake.calls.writeFile[0][1];
+    const text = typeof written === "string" ? written : await written.text();
+    assert.match(text, /^Brave Shine — Aimer<br>強く眩しい光が\t/);
+    assert.match(text, /\tlyriclens song:brave_shine_aimer_234 source:plugin\n$/);
+  } finally {
+    restore();
+  }
+});
+
+test("exportToFile surfaces failures instead of throwing", async () => {
+  const { Notebook, restore } = freshNotebook();
+  try {
+    Notebook._setPersistenceForTest(makeFakePersistence([makeEntry()]));
+    await Notebook.bootstrap();
+    const failing = await Notebook.exportToFile("json", { betterncm: makeFakeBetterncm({ failWrite: true }) });
+    assert.equal(failing.ok, false);
+    assert.match(failing.error, /disk full/);
+    const missing = await Notebook.exportToFile("json", { betterncm: {} });
+    assert.equal(missing.ok, false);
+    assert.match(missing.error, /writeFile 不可用/);
+  } finally {
+    restore();
+  }
+});
+
+test("exportToFile falls back to a relative dir when getDataPath is absent", async () => {
+  const { Notebook, restore } = freshNotebook();
+  try {
+    Notebook._setPersistenceForTest(makeFakePersistence([makeEntry()]));
+    await Notebook.bootstrap();
+    const calls = { writeFile: [] };
+    const fake = {
+      fs: {
+        writeFile: async (path, content) => { calls.writeFile.push([path, content]); }
+      }
+    };
+    const result = await Notebook.exportToFile("json", { betterncm: fake });
+    assert.equal(result.ok, true);
+    assert.match(result.path, /^\.\/lyriclens-exports\//);
+  } finally {
+    restore();
+  }
+});
+
+test("importFromText wraps parse + merge, reporting errors as values", async () => {
+  const { Notebook, restore } = freshNotebook();
+  try {
+    Notebook._setPersistenceForTest(makeFakePersistence());
+    await Notebook.bootstrap();
+    const good = Notebook.importFromText(JSON.stringify({
+      schema: "lyriclens.notebook.v1",
+      entries: [makeEntry({ source: "desktop" })]
+    }), { nowMs: 1751500000000 });
+    assert.equal(good.ok, true);
+    assert.equal(good.summary.imported, 1);
+
+    const badSchema = Notebook.importFromText(JSON.stringify({ schema: "nope", entries: [] }));
+    assert.equal(badSchema.ok, false);
+    assert.match(badSchema.error, /unknown schema version/);
+
+    const badJson = Notebook.importFromText("{oops");
+    assert.equal(badJson.ok, false);
+    assert.match(badJson.error, /JSON 解析失败/);
+  } finally {
+    restore();
+  }
+});
+
 // ── cross-host fixture round-trip ───────────────────────────────────
 
 test("a desktop-shaped export imports cleanly (field-name contract)", async () => {

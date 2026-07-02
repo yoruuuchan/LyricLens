@@ -798,6 +798,7 @@
           notebookSelectedIds = new Set();
           notebookEditingId = null;
         }
+        notebookStatus = null;
         render();
       });
       if (notebookOpen) notebookBtn.classList.add("ll-is-active");
@@ -958,6 +959,10 @@
 
     let notebookEditingDraft = "";
     let notebookDeleteArmed = false;
+    // {text, kind: "ok"|"error"} — inline status line under the
+    // toolbar (export/import results); cleared when the view closes.
+    let notebookStatus = null;
+    let notebookIoBusy = false;
 
     function formatClock(ms) {
       if (!Number.isFinite(ms)) return "";
@@ -991,7 +996,14 @@
       }
 
       const entries = Notebook.listEntries();
-      view.appendChild(renderNotebookToolbar(entries));
+      view.appendChild(renderNotebookToolbar(entries, Notebook));
+      if (notebookStatus) {
+        view.appendChild(Card.el(
+          "div",
+          notebookStatus.kind === "error" ? "ll-nb-status ll-is-error" : "ll-nb-status",
+          notebookStatus.text
+        ));
+      }
 
       if (!entries.length) {
         view.appendChild(Card.renderMessage(
@@ -1009,10 +1021,24 @@
       return view;
     }
 
-    function renderNotebookToolbar(entries) {
+    function renderNotebookToolbar(entries, Notebook) {
       const bar = Card.el("div", "ll-nb-toolbar");
       bar.appendChild(Card.el("span", "ll-nb-count", `${entries.length} 条收藏`));
       const actions = Card.el("div", "ll-nb-toolbar-actions");
+
+      const ghost = (label, handler, disabled = false) => {
+        const button = Card.el("button", "ll-ghost-button", label);
+        button.type = "button";
+        button.disabled = disabled;
+        button.addEventListener("click", handler);
+        return button;
+      };
+
+      if (entries.length) {
+        actions.appendChild(ghost("导出 JSON", () => runNotebookExport(Notebook, "json"), notebookIoBusy));
+        actions.appendChild(ghost("导出 Anki", () => runNotebookExport(Notebook, "anki"), notebookIoBusy));
+      }
+      actions.appendChild(ghost("导入", () => pickNotebookImportFile(Notebook), notebookIoBusy));
       if (entries.length) {
         const select = Card.el(
           "button",
@@ -1030,6 +1056,65 @@
       }
       bar.appendChild(actions);
       return bar;
+    }
+
+    function runNotebookExport(Notebook, format) {
+      if (notebookIoBusy || typeof Notebook.exportToFile !== "function") return;
+      notebookIoBusy = true;
+      notebookStatus = { text: "正在导出...", kind: "ok" };
+      render();
+      Notebook.exportToFile(format)
+        .then((result) => {
+          notebookStatus = result.ok
+            ? { text: `已导出 ${result.count} 条 · ${result.path}`, kind: "ok" }
+            : { text: `导出失败：${result.error}`, kind: "error" };
+        })
+        .catch((err) => {
+          notebookStatus = { text: `导出失败：${err?.message || err}`, kind: "error" };
+        })
+        .finally(() => {
+          notebookIoBusy = false;
+          render();
+        });
+    }
+
+    // File picker → FileReader → store import. The input element is
+    // created on the fly inside the click gesture (Chromium allows the
+    // programmatic .click() there) and never enters the panel DOM.
+    function pickNotebookImportFile(Notebook) {
+      if (notebookIoBusy || typeof Notebook.importFromText !== "function") return;
+      const input = root.document.createElement("input");
+      input.type = "file";
+      input.accept = ".json,application/json";
+      input.addEventListener("change", () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        notebookIoBusy = true;
+        notebookStatus = { text: "正在导入...", kind: "ok" };
+        render();
+        const reader = new root.FileReader();
+        reader.onload = () => {
+          const result = Notebook.importFromText(String(reader.result ?? ""));
+          notebookStatus = result.ok
+            ? {
+                text: `导入完成 · 新 ${result.summary.imported} · 合并 ${result.summary.merged} · 跳过 ${result.summary.skipped}`,
+                kind: "ok"
+              }
+            : { text: `导入失败：${result.error}`, kind: "error" };
+          if (result.ok && result.summary.errors.length) {
+            console.warn("[LyricLens:notebook]", "导入跳过明细", result.summary.errors);
+          }
+          notebookIoBusy = false;
+          render();
+        };
+        reader.onerror = () => {
+          notebookStatus = { text: "导入失败：文件读取错误", kind: "error" };
+          notebookIoBusy = false;
+          render();
+        };
+        reader.readAsText(file);
+      });
+      input.click();
     }
 
     function renderNotebookEntry(entry, Notebook) {
