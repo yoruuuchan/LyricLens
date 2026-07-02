@@ -17,6 +17,7 @@
       { "file": "utils.js" },
       { "file": "cache.js" },
       { "file": "dicts.js" },
+      { "file": "notebook.js" },
       { "file": "updater.js" },
       { "file": "detect.js" },
       { "file": "lyrics.js" },
