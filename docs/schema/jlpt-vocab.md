@@ -31,10 +31,13 @@
 KV key                                    公开 URL
 jlpt/manifest.json                        https://dicts.yoru-and-akari.dev/jlpt/manifest.json
 jlpt/jlpt-levels.bluskyo-<sha7>.v1.json.br  https://dicts.yoru-and-akari.dev/jlpt/jlpt-levels.bluskyo-<sha7>.v1.json.br
+jlpt/jlpt-levels.bluskyo-<sha7>.v1.json.gz  同名 .gz 变体（给插件版 host）
 jlpt/jlpt-levels.yomitan-<version>.v1.json.br  ← 备选,可选上传
 ```
 
 manifest 用短缓存（1h），versioned blob 用长缓存（`max-age=31536000, immutable`）。**发布流程**：先上传 blob → 等 KV 传播（~60s）→ 再更新 manifest。
+
+**gzip 变体（2026-07-02 追加，分发层 additive）**：每个 blob 同时发布 `.json.gz`，manifest `sources.<build>` 加 `gzip: {url, sha256, bytes}` 字段（optional 字段不 bump schema，同 notebook-entry v1.1 惯例）。插件版 host 消费它——NCM 内嵌 Chromium 91 无 brotli 解码器（`DecompressionStream` 仅支持 gzip/deflate）；`.br` 仍是桌面版的 canonical blob，桌面侧零改动。
 
 版本 tag 用 Bluskyo 上游 commit 的 short sha（脚本自动查 `commits?path=...` API 拿最近一次），例如 `bluskyo-d29a678.v1`。这样多次上游更新的 blob 可以在 KV 里共存，manifest 用 `latest` 字段指向当前活跃版本。
 

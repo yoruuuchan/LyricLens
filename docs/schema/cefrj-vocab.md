@@ -53,13 +53,16 @@
 
 ## Cloudflare KV 结构
 
-复用 `dicts-cdn` Worker（allowlist `<family>/(manifest.json|*.json.br)` 天然放行）：
+复用 `dicts-cdn` Worker（allowlist `<family>/(manifest.json|*.json.(br|gz))` 天然放行）：
 
 ```text
 KV key                                  公开 URL
 cefrj/manifest.json                     https://dicts.yoru-and-akari.dev/cefrj/manifest.json
 cefrj/cefrj-levels.olp-<sha7>.v1.json.br  https://dicts.yoru-and-akari.dev/cefrj/cefrj-levels.olp-<sha7>.v1.json.br
+cefrj/cefrj-levels.olp-<sha7>.v1.json.gz  同名 .gz 变体（给插件版 host）
 ```
+
+**gzip 变体（2026-07-02 追加，分发层 additive）**：每个 blob 同时发布 `.json.gz`，manifest `sources.<build>` 加 `gzip: {url, sha256, bytes}` 字段（optional 字段不 bump schema）。插件版 host 消费它——NCM 内嵌 Chromium 91 无 brotli 解码器（`DecompressionStream` 仅支持 gzip/deflate）；`.br` 仍是桌面版的 canonical blob，桌面侧零改动。
 
 单源有真实 commit sha 可用，`<build>` 走 JLPT 的 `<source>-<sha7>` 惯例（如 `olp-c5c6a64.v1`），不用 enexam 的 `multi-<yyyymmdd>` 日期形式。sha 取 `commits?path=cefrj-vocabulary-profile-1.5.csv` 的 last-touching commit（数据文件没动则 build 可复现）。发布流程与 JLPT/enexam 相同：blob 先行 → 60s KV 传播 → manifest 收尾。
 
