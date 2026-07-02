@@ -43,6 +43,10 @@
       ["path", { d: "M15 3h6v6" }],
       ["path", { d: "M10 14L21 3" }],
       ["path", { d: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" }]
+    ],
+    book: [
+      ["path", { d: "M4 19.5A2.5 2.5 0 0 1 6.5 17H20" }],
+      ["path", { d: "M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" }]
     ]
   };
 
@@ -374,6 +378,16 @@
     let minimized = stateController.getState().panelCollapsed;
     let settingsOpen = false;
     let settingsTab = "general";
+    // Notebook view state. notebookOpen is mutually exclusive with
+    // settingsOpen; while it's open, background renders are suppressed
+    // (renderBackground) so an in-flight note edit can't be wiped by a
+    // sync tick.
+    let notebookOpen = false;
+    let notebookSelectMode = false;
+    let notebookSelectedIds = new Set();
+    let notebookEditingId = null;
+    // lineIndexes with a star toggle in flight — blocks double-clicks.
+    const starBusyLines = new Set();
     let rect = stateController.getState().panelBounds;
     let poppedOut = false;
     let bridgeStatus = "idle";
@@ -484,6 +498,7 @@
       mode = "debug";
       message = "";
       settingsOpen = false;
+      notebookOpen = false;
       ensureVisible();
       render();
     }
@@ -493,6 +508,7 @@
       mode = "config";
       message = "请在插件设置中配置 AI 服务";
       settingsOpen = true;
+      notebookOpen = false;
       settingsTab = "ai";
       ensureVisible();
       render();
@@ -503,7 +519,7 @@
     // many times per second, which both wipes the form's in-flight values
     // and yanks the user out of the settings view.
     function renderBackground() {
-      if (settingsOpen) return;
+      if (settingsOpen || notebookOpen) return;
       render();
     }
 
@@ -638,8 +654,9 @@
       panel.innerHTML = "";
       panel.classList.toggle("ll-is-minimized", minimized && !poppedOut);
       panel.classList.toggle("ll-is-popped-out", poppedOut);
-      panel.classList.toggle("ll-is-settings", settingsOpen && !poppedOut);
-      panel.classList.toggle("ll-has-footer", mode === "card" && !settingsOpen && !minimized && !poppedOut);
+      panel.classList.toggle("ll-is-settings", (settingsOpen || notebookOpen) && !poppedOut);
+      panel.classList.toggle("ll-is-notebook", notebookOpen && !poppedOut);
+      panel.classList.toggle("ll-has-footer", mode === "card" && !settingsOpen && !notebookOpen && !minimized && !poppedOut);
       applySettingsVisuals();
 
       if (mode === "hidden") {
@@ -669,7 +686,9 @@
       panel.appendChild(renderTitlebar());
       const content = Card.el("div", "ll-content");
 
-      if (settingsOpen) {
+      if (notebookOpen) {
+        content.appendChild(renderNotebookView());
+      } else if (settingsOpen) {
         content.appendChild(renderSettingsForm());
       } else if (mode === "card") {
         renderCurrentCard(content);
@@ -707,7 +726,7 @@
         restoreSettingsBodyScroll(body, restoreSettingsScrollTop);
       }
       if (options.isDebugEnabled?.() && mode !== "debug") panel.appendChild(renderDebugEntry());
-      if (mode === "card" && !settingsOpen) panel.appendChild(renderFooter());
+      if (mode === "card" && !settingsOpen && !notebookOpen) panel.appendChild(renderFooter());
       ["n", "ne", "e", "se", "s", "sw", "w", "nw"].forEach((direction) => {
         const handle = Card.el("div", `ll-resize-handle ll-resize-${direction}`);
         handle.dataset.direction = direction;
@@ -757,7 +776,7 @@
       const status = Card.el("div", "ll-subtitle");
       const autoFollow = stateController.getState().autoFollow;
       status.appendChild(Card.el("span", autoFollow ? "ll-status-dot" : "ll-status-dot ll-is-manual"));
-      status.appendChild(Card.el("span", "", settingsOpen ? "面板设置" : (autoFollow ? "跟随播放" : "手动浏览")));
+      status.appendChild(Card.el("span", "", notebookOpen ? "笔记本" : settingsOpen ? "面板设置" : (autoFollow ? "跟随播放" : "手动浏览")));
       text.appendChild(status);
       brand.appendChild(text);
       titlebar.appendChild(brand);
@@ -771,8 +790,21 @@
       const showUpdateBadge = (updateState.status === "update-available" &&
                                (updateState.latest && updateState.latest !== settings.lastSeenLatest))
                               || updateState.installedNeedsRestart;
+      const notebookBtn = iconButton("ll-notebook-button", notebookOpen ? "arrow-left" : "book", notebookOpen ? "返回" : "笔记本", () => {
+        notebookOpen = !notebookOpen;
+        if (notebookOpen) {
+          settingsOpen = false;
+          notebookSelectMode = false;
+          notebookSelectedIds = new Set();
+          notebookEditingId = null;
+        }
+        render();
+      });
+      if (notebookOpen) notebookBtn.classList.add("ll-is-active");
+      actions.appendChild(notebookBtn);
       const settingsBtn = iconButton("ll-settings-button", settingsOpen ? "arrow-left" : "settings", settingsOpen ? "返回" : (showUpdateBadge ? "设置（有新版本）" : "设置"), () => {
         settingsOpen = !settingsOpen;
+        if (settingsOpen) notebookOpen = false;
         if (settingsOpen && showUpdateBadge) settingsTab = "about";
         render();
       });
@@ -818,8 +850,36 @@
       }
       content.appendChild(Card.renderCard(card, currentAnalysis.language));
       Card.hydrateDictBadges?.(content, { targetExam: settings.targetExam });
+      hydrateStarState(content, card);
       const sample = [card.line, card.translation].filter(Boolean).join(" / ");
       recordPanelDiagnostics(sample);
+    }
+
+    // Fill the star slot on the current card from the notebook store.
+    // The store answers synchronously off its in-memory mirror; the
+    // actual toggle is async (main.js resolves song metadata first),
+    // so the line is marked busy until the handler re-renders.
+    function hydrateStarState(content, card) {
+      const Notebook = root.LyricLens?.Notebook;
+      if (!Card.hydrateStarButtons) return;
+      const songKey = typeof options.getNotebookSongKey === "function" ? options.getNotebookSongKey() : null;
+      Card.hydrateStarButtons(content, {
+        disabled: !Notebook?.isReady?.() || typeof options.onStarToggle !== "function",
+        isStarred: (lineIndex) =>
+          Boolean(songKey && Notebook?.getByBusinessKey?.(songKey, lineIndex)),
+        isBusy: (lineIndex) => starBusyLines.has(lineIndex),
+        onToggle: (lineIndex) => {
+          if (starBusyLines.has(lineIndex)) return;
+          starBusyLines.add(lineIndex);
+          render();
+          Promise.resolve(options.onStarToggle(card, lineIndex))
+            .catch((err) => console.warn("[LyricLens:notebook]", "star toggle 失败", err?.message || err))
+            .finally(() => {
+              starBusyLines.delete(lineIndex);
+              render();
+            });
+        }
+      });
     }
 
     function getCards() {
@@ -886,6 +946,251 @@
       const card = cards[ordinal] || null;
       options.onManualNavigation?.({ index: card?.index ?? ordinal, ordinal });
       renderCardAt(ordinal, "manual");
+    }
+
+    // ── Notebook view ────────────────────────────────────────────────
+    //
+    // First-class titlebar destination (Yoru's desktop-side ruling:
+    // notebook entry points don't live inside settings). Renders off
+    // the store's in-memory mirror; every mutation below calls the
+    // store synchronously and re-renders. Mastery is display-only —
+    // no rating buttons, by schema-doc hard rule.
+
+    let notebookEditingDraft = "";
+    let notebookDeleteArmed = false;
+
+    function formatClock(ms) {
+      if (!Number.isFinite(ms)) return "";
+      return `${String(Math.floor(ms / 60000)).padStart(2, "0")}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}`;
+    }
+
+    function formatStarDate(ms) {
+      const d = new Date(ms);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    }
+
+    function renderNotebookView() {
+      const Notebook = root.LyricLens?.Notebook;
+      const view = Card.el("div", "ll-notebook");
+
+      if (!Notebook) {
+        view.appendChild(Card.renderMessage("笔记本模块未加载", "ll-empty"));
+        return view;
+      }
+      const diag = Notebook.getDiagnostics();
+      if (String(diag.status).startsWith("failed")) {
+        view.appendChild(Card.renderMessage(
+          "笔记本存储不可用（IndexedDB 打不开）。收藏功能暂时禁用，其余功能不受影响。",
+          "ll-empty ll-error"
+        ));
+        return view;
+      }
+      if (diag.status !== "ready") {
+        view.appendChild(Card.renderMessage("笔记本加载中...", "ll-empty"));
+        return view;
+      }
+
+      const entries = Notebook.listEntries();
+      view.appendChild(renderNotebookToolbar(entries));
+
+      if (!entries.length) {
+        view.appendChild(Card.renderMessage(
+          "还没有收藏。播放歌曲时，点学习卡片右上角的 ☆ 把这一句收进笔记本。",
+          "ll-empty"
+        ));
+        return view;
+      }
+
+      const list = Card.el("div", "ll-nb-list");
+      entries.forEach((entry) => list.appendChild(renderNotebookEntry(entry, Notebook)));
+      view.appendChild(list);
+
+      if (notebookSelectMode) view.appendChild(renderNotebookBatchBar(entries, Notebook));
+      return view;
+    }
+
+    function renderNotebookToolbar(entries) {
+      const bar = Card.el("div", "ll-nb-toolbar");
+      bar.appendChild(Card.el("span", "ll-nb-count", `${entries.length} 条收藏`));
+      const actions = Card.el("div", "ll-nb-toolbar-actions");
+      if (entries.length) {
+        const select = Card.el(
+          "button",
+          notebookSelectMode ? "ll-ghost-button ll-is-active" : "ll-ghost-button",
+          notebookSelectMode ? "退出选择" : "批量选择"
+        );
+        select.type = "button";
+        select.addEventListener("click", () => {
+          notebookSelectMode = !notebookSelectMode;
+          notebookSelectedIds = new Set();
+          notebookDeleteArmed = false;
+          render();
+        });
+        actions.appendChild(select);
+      }
+      bar.appendChild(actions);
+      return bar;
+    }
+
+    function renderNotebookEntry(entry, Notebook) {
+      const item = Card.el("article", "ll-nb-entry");
+      item.dataset.entryId = entry.id;
+
+      const meta = Card.el("div", "ll-nb-meta");
+      if (notebookSelectMode) {
+        const checkbox = Card.el("input", "ll-nb-check");
+        checkbox.type = "checkbox";
+        checkbox.checked = notebookSelectedIds.has(entry.id);
+        checkbox.setAttribute("aria-label", "选择这条收藏");
+        checkbox.addEventListener("change", () => {
+          if (notebookSelectedIds.has(entry.id)) notebookSelectedIds.delete(entry.id);
+          else notebookSelectedIds.add(entry.id);
+          notebookDeleteArmed = false;
+          render();
+        });
+        meta.appendChild(checkbox);
+      }
+      meta.appendChild(Card.el("span", "ll-nb-song", `${entry.songTitle} · ${entry.songArtist}`));
+      const clock = formatClock(entry.card.startMs);
+      if (clock) meta.appendChild(Card.el("span", "ll-nb-clock", clock));
+      item.appendChild(meta);
+
+      const hero = Card.el("div", "ll-nb-hero");
+      hero.appendChild(Card.el("div", "ll-nb-line", entry.lineText));
+      if (entry.card.translation) {
+        hero.appendChild(Card.el("div", "ll-nb-translation", entry.card.translation));
+      }
+      item.appendChild(hero);
+
+      if (entry.card.points.length) {
+        const points = Card.el("div", "ll-nb-points");
+        entry.card.points.forEach((point) => {
+          const row = Card.el("div", "ll-nb-point");
+          const label = KNOWLEDGE_POINT_LABELS[point.type];
+          if (label) row.appendChild(Card.el("span", "ll-nb-point-type", label));
+          row.appendChild(Card.el("span", "ll-nb-point-text", point.text));
+          points.appendChild(row);
+        });
+        item.appendChild(points);
+      }
+      if (entry.card.note.trim()) {
+        item.appendChild(Card.el("div", "ll-nb-llm-note", entry.card.note));
+      }
+
+      if (notebookEditingId === entry.id) {
+        item.appendChild(renderNotebookNoteEditor(entry, Notebook));
+      } else if (entry.userNote.trim()) {
+        item.appendChild(Card.el("div", "ll-nb-user-note", entry.userNote));
+      }
+
+      const foot = Card.el("footer", "ll-nb-foot");
+      const stamps = Card.el("div", "ll-nb-stamps");
+      stamps.appendChild(Card.el("span", "ll-nb-date", formatStarDate(entry.starredAt)));
+      const tag = Notebook.masteryTag(entry.mastery, entry.lastReviewedAt);
+      const mastery = Card.el("span", `ll-nb-mastery ${tag.cls}`);
+      mastery.title = Notebook.MASTERY_TOOLTIP;
+      mastery.appendChild(Card.el("span", "ll-nb-mastery-dot"));
+      mastery.appendChild(Card.el("span", "", tag.text));
+      stamps.appendChild(mastery);
+      foot.appendChild(stamps);
+
+      const actions = Card.el("div", "ll-nb-actions");
+      if (notebookEditingId !== entry.id) {
+        const edit = Card.el("button", "ll-ghost-button", entry.userNote.trim() ? "编辑备注" : "加备注");
+        edit.type = "button";
+        edit.addEventListener("click", () => {
+          notebookEditingId = entry.id;
+          notebookEditingDraft = entry.userNote;
+          render();
+        });
+        actions.appendChild(edit);
+      }
+      const unstar = Card.el("button", "ll-ghost-button ll-nb-unstar", "取消收藏");
+      unstar.type = "button";
+      unstar.addEventListener("click", () => {
+        Notebook.unstar(entry.id);
+        notebookSelectedIds.delete(entry.id);
+        if (notebookEditingId === entry.id) notebookEditingId = null;
+        render();
+      });
+      actions.appendChild(unstar);
+      foot.appendChild(actions);
+      item.appendChild(foot);
+
+      return item;
+    }
+
+    function renderNotebookNoteEditor(entry, Notebook) {
+      const editor = Card.el("div", "ll-nb-editor");
+      const textarea = Card.el("textarea", "ll-nb-textarea");
+      textarea.value = notebookEditingDraft;
+      textarea.rows = 3;
+      textarea.placeholder = "写点自己的理解、联想、例句...";
+      textarea.addEventListener("input", () => {
+        notebookEditingDraft = textarea.value;
+      });
+      editor.appendChild(textarea);
+      const row = Card.el("div", "ll-nb-editor-actions");
+      const save = Card.el("button", "ll-secondary-button", "保存备注");
+      save.type = "button";
+      save.addEventListener("click", () => {
+        Notebook.updateUserNote(entry.id, notebookEditingDraft);
+        notebookEditingId = null;
+        notebookEditingDraft = "";
+        render();
+      });
+      const cancel = Card.el("button", "ll-ghost-button", "取消");
+      cancel.type = "button";
+      cancel.addEventListener("click", () => {
+        notebookEditingId = null;
+        notebookEditingDraft = "";
+        render();
+      });
+      row.appendChild(save);
+      row.appendChild(cancel);
+      editor.appendChild(row);
+      return editor;
+    }
+
+    function renderNotebookBatchBar(entries, Notebook) {
+      const bar = Card.el("div", "ll-nb-batchbar");
+      bar.appendChild(Card.el("span", "", `已选 ${notebookSelectedIds.size} / ${entries.length}`));
+      const actions = Card.el("div", "ll-nb-batchbar-actions");
+
+      const allSelected = entries.length > 0 && notebookSelectedIds.size === entries.length;
+      const selectAll = Card.el("button", "ll-ghost-button", allSelected ? "取消全选" : "全选");
+      selectAll.type = "button";
+      selectAll.addEventListener("click", () => {
+        notebookSelectedIds = allSelected ? new Set() : new Set(entries.map((e) => e.id));
+        notebookDeleteArmed = false;
+        render();
+      });
+      actions.appendChild(selectAll);
+
+      // Two-step delete: window.confirm is unreliable inside NCM's
+      // embedded Chromium, so the button arms first, executes second.
+      const del = Card.el(
+        "button",
+        notebookDeleteArmed ? "ll-secondary-button ll-nb-delete ll-is-armed" : "ll-secondary-button ll-nb-delete",
+        notebookDeleteArmed ? `确认删除 ${notebookSelectedIds.size} 条？` : "删除选中"
+      );
+      del.type = "button";
+      del.disabled = notebookSelectedIds.size === 0;
+      del.addEventListener("click", () => {
+        if (!notebookDeleteArmed) {
+          notebookDeleteArmed = true;
+          render();
+          return;
+        }
+        Notebook.removeMany(Array.from(notebookSelectedIds));
+        notebookSelectedIds = new Set();
+        notebookDeleteArmed = false;
+        if (notebookEditingId && !Notebook.getById(notebookEditingId)) notebookEditingId = null;
+        render();
+      });
+      actions.appendChild(del);
+      bar.appendChild(actions);
+      return bar;
     }
 
     function renderSettingsForm() {

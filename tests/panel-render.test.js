@@ -506,3 +506,255 @@ test("custom prompt disclosure keeps open state and settings scroll position", (
     delete require.cache[require.resolve("../src/panel")];
   }
 });
+
+// ── Notebook view + star hydration ──────────────────────────────
+
+function withPanelHarness(run) {
+  const previous = {
+    LyricLens: globalThis.LyricLens,
+    document: globalThis.document,
+    localStorage: globalThis.localStorage,
+    innerWidth: globalThis.innerWidth,
+    innerHeight: globalThis.innerHeight,
+    addEventListener: globalThis.addEventListener,
+    removeEventListener: globalThis.removeEventListener
+  };
+  const document = createFakeDocument();
+  globalThis.document = document;
+  globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+  globalThis.innerWidth = 1280;
+  globalThis.innerHeight = 720;
+  globalThis.addEventListener = () => {};
+  globalThis.removeEventListener = () => {};
+  globalThis.LyricLens = {
+    Settings: { normalizeSettings: (s) => s || {} }
+  };
+  delete require.cache[require.resolve("../src/card")];
+  delete require.cache[require.resolve("../src/panel")];
+  require("../src/card");
+  const { createPanel } = require("../src/panel");
+  try {
+    run({ document, createPanel });
+  } finally {
+    globalThis.LyricLens = previous.LyricLens;
+    globalThis.document = previous.document;
+    globalThis.localStorage = previous.localStorage;
+    globalThis.innerWidth = previous.innerWidth;
+    globalThis.innerHeight = previous.innerHeight;
+    globalThis.addEventListener = previous.addEventListener;
+    globalThis.removeEventListener = previous.removeEventListener;
+    delete require.cache[require.resolve("../src/card")];
+    delete require.cache[require.resolve("../src/panel")];
+  }
+}
+
+// Async twin of withPanelHarness for tests that need to drain promise
+// chains before the fake document is torn down.
+async function withPanelHarnessAsync(run) {
+  const previous = {
+    LyricLens: globalThis.LyricLens,
+    document: globalThis.document,
+    localStorage: globalThis.localStorage,
+    innerWidth: globalThis.innerWidth,
+    innerHeight: globalThis.innerHeight,
+    addEventListener: globalThis.addEventListener,
+    removeEventListener: globalThis.removeEventListener
+  };
+  const document = createFakeDocument();
+  globalThis.document = document;
+  globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+  globalThis.innerWidth = 1280;
+  globalThis.innerHeight = 720;
+  globalThis.addEventListener = () => {};
+  globalThis.removeEventListener = () => {};
+  globalThis.LyricLens = {
+    Settings: { normalizeSettings: (s) => s || {} }
+  };
+  delete require.cache[require.resolve("../src/card")];
+  delete require.cache[require.resolve("../src/panel")];
+  require("../src/card");
+  const { createPanel } = require("../src/panel");
+  try {
+    await run({ document, createPanel });
+  } finally {
+    globalThis.LyricLens = previous.LyricLens;
+    globalThis.document = previous.document;
+    globalThis.localStorage = previous.localStorage;
+    globalThis.innerWidth = previous.innerWidth;
+    globalThis.innerHeight = previous.innerHeight;
+    globalThis.addEventListener = previous.addEventListener;
+    globalThis.removeEventListener = previous.removeEventListener;
+    delete require.cache[require.resolve("../src/card")];
+    delete require.cache[require.resolve("../src/panel")];
+  }
+}
+
+function makeNotebookEntryFixture(overrides = {}) {
+  return {
+    id: "11111111-2222-4333-8444-555555555555",
+    songKey: "brave shine|aimer|234",
+    songTitle: "Brave Shine",
+    songArtist: "Aimer",
+    lineIndex: 3,
+    lineText: "強く眩しい光が",
+    card: {
+      index: 3, lineIndex: 3,
+      original: "強く眩しい光が", translation: "强烈而耀眼的光",
+      points: [{ type: "vocabulary", text: "眩しい: 耀眼的" }],
+      note: "", startMs: 30000, endMs: 34000
+    },
+    userNote: "",
+    starredAt: 1751400000000,
+    updatedAt: 1751400000000,
+    source: "plugin",
+    mastery: "new",
+    lastReviewedAt: null,
+    ...overrides
+  };
+}
+
+function makeFakeNotebook(entries) {
+  const calls = { unstar: [], updateUserNote: [], removeMany: [] };
+  return {
+    calls,
+    isReady: () => true,
+    getDiagnostics: () => ({ status: "ready", count: entries.length }),
+    listEntries: () => entries.slice(),
+    getById: (id) => entries.find((e) => e.id === id) || null,
+    getByBusinessKey: (songKey, lineIndex) =>
+      entries.find((e) => e.songKey === songKey && e.lineIndex === lineIndex) || null,
+    masteryTag: (mastery, lastReviewedAt) =>
+      mastery === "new" || lastReviewedAt === null
+        ? { cls: "mastery-new", text: "新加 · 从未复习" }
+        : { cls: `mastery-${mastery}`, text: `${mastery} · reviewed` },
+    MASTERY_TOOLTIP: "复习进度来自安卓单词本 app（read-only，插件端不编辑）",
+    unstar: (id) => { calls.unstar.push(id); return true; },
+    updateUserNote: (id, note) => { calls.updateUserNote.push([id, note]); return null; },
+    removeMany: (ids) => { calls.removeMany.push(ids); return ids.length; }
+  };
+}
+
+test("notebook button opens the view with entries, mastery tag, note editor", () => {
+  withPanelHarness(({ document, createPanel }) => {
+    const entry = makeNotebookEntryFixture({ userNote: "已有备注" });
+    const fakeNotebook = makeFakeNotebook([entry]);
+    globalThis.LyricLens.Notebook = fakeNotebook;
+
+    const panel = createPanel({ settings: {}, isDebugEnabled: () => false });
+    const card = { index: 3, lineIndex: 3, original: "強く眩しい光が", translation: "强烈而耀眼的光", highlights: [] };
+    panel.showCard({ language: "ja", cards: [card], cardsByIndex: new Map([[3, card]]) }, 3);
+
+    const panelNode = document.querySelector(".ll-panel");
+    panelNode.querySelector(".ll-notebook-button").eventListeners.click();
+
+    assert.ok(panelNode.querySelector(".ll-notebook"), "notebook view rendered");
+    assert.match(panelNode.querySelector(".ll-nb-count").textContent, /1 条收藏/);
+    assert.match(panelNode.querySelector(".ll-nb-song").textContent, /Brave Shine · Aimer/);
+    assert.match(panelNode.querySelector(".ll-nb-line").textContent, /強く眩しい光が/);
+    assert.match(panelNode.querySelector(".ll-nb-user-note").textContent, /已有备注/);
+    const mastery = panelNode.querySelector(".ll-nb-mastery");
+    assert.ok(mastery.classList.values.has("mastery-new"));
+    assert.match(mastery.textContent, /新加 · 从未复习/);
+
+    // Note editor: open → type → save routes through the store.
+    const editBtn = panelNode
+      .querySelectorAll(".ll-ghost-button")
+      .find((b) => b.textContent === "编辑备注");
+    editBtn.eventListeners.click();
+    const textarea = panelNode.querySelector(".ll-nb-textarea");
+    assert.ok(textarea, "editor textarea rendered");
+    textarea.value = "新写的备注";
+    textarea.eventListeners.input();
+    const saveBtn = panelNode
+      .querySelectorAll(".ll-secondary-button")
+      .find((b) => b.textContent === "保存备注");
+    saveBtn.eventListeners.click();
+    assert.deepEqual(fakeNotebook.calls.updateUserNote, [[entry.id, "新写的备注"]]);
+  });
+});
+
+test("notebook batch selection deletes via the two-step armed button", () => {
+  withPanelHarness(({ document, createPanel }) => {
+    const a = makeNotebookEntryFixture();
+    const b = makeNotebookEntryFixture({
+      id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", lineIndex: 7, lineText: "第二句"
+    });
+    const fakeNotebook = makeFakeNotebook([a, b]);
+    globalThis.LyricLens.Notebook = fakeNotebook;
+
+    const panel = createPanel({ settings: {}, isDebugEnabled: () => false });
+    panel.showCard({ language: "ja", cards: [], cardsByIndex: new Map([[0, {}]]) }, 0);
+    const panelNode = document.querySelector(".ll-panel");
+    panelNode.querySelector(".ll-notebook-button").eventListeners.click();
+
+    // Enter select mode, select all, arm, confirm.
+    panelNode.querySelectorAll(".ll-ghost-button").find((x) => x.textContent === "批量选择").eventListeners.click();
+    assert.equal(panelNode.querySelectorAll(".ll-nb-check").length, 2);
+    panelNode.querySelectorAll(".ll-ghost-button").find((x) => x.textContent === "全选").eventListeners.click();
+    let del = panelNode.querySelector(".ll-nb-delete");
+    assert.equal(del.textContent, "删除选中");
+    del.eventListeners.click();
+    del = panelNode.querySelector(".ll-nb-delete");
+    assert.match(del.textContent, /确认删除 2 条？/);
+    del.eventListeners.click();
+    assert.equal(fakeNotebook.calls.removeMany.length, 1);
+    assert.deepEqual(new Set(fakeNotebook.calls.removeMany[0]), new Set([a.id, b.id]));
+  });
+});
+
+test("notebook view degrades gracefully when the store failed", () => {
+  withPanelHarness(({ document, createPanel }) => {
+    globalThis.LyricLens.Notebook = {
+      isReady: () => false,
+      getDiagnostics: () => ({ status: "failed:indexedDB 不可用", count: 0 })
+    };
+    const panel = createPanel({ settings: {}, isDebugEnabled: () => false });
+    panel.showCard({ language: "ja", cards: [], cardsByIndex: new Map([[0, {}]]) }, 0);
+    const panelNode = document.querySelector(".ll-panel");
+    panelNode.querySelector(".ll-notebook-button").eventListeners.click();
+    assert.match(panelNode.querySelector(".ll-notebook").textContent, /笔记本存储不可用/);
+  });
+});
+
+test("card star slot hydrates from the store and routes toggles with busy lock", async () => {
+  await withPanelHarnessAsync(async ({ document, createPanel }) => {
+    const entry = makeNotebookEntryFixture();
+    globalThis.LyricLens.Notebook = makeFakeNotebook([entry]);
+
+    const toggles = [];
+    let resolveToggle;
+    const panel = createPanel({
+      settings: {},
+      isDebugEnabled: () => false,
+      getNotebookSongKey: () => "brave shine|aimer|234",
+      onStarToggle: (card, lineIndex) => {
+        toggles.push(lineIndex);
+        return new Promise((resolve) => { resolveToggle = resolve; });
+      }
+    });
+    const starred = { index: 3, lineIndex: 3, original: "強く眩しい光が", translation: "光", highlights: [] };
+    const fresh = { index: 5, lineIndex: 5, original: "別の行", translation: "另一行", highlights: [] };
+    panel.showCard({
+      language: "ja",
+      cards: [starred, fresh],
+      cardsByIndex: new Map([[3, starred], [5, fresh]])
+    }, 3);
+
+    const panelNode = document.querySelector(".ll-panel");
+    let btn = panelNode.querySelector(".ll-star-btn");
+    assert.ok(btn, "star button hydrated on the current card");
+    assert.ok(btn.classList.values.has("ll-is-on"), "line 3 is starred in the store");
+
+    btn.eventListeners.click({ stopPropagation() {} });
+    assert.deepEqual(toggles, [3]);
+    // While the async toggle is in flight the re-rendered button is busy.
+    btn = panelNode.querySelector(".ll-star-btn");
+    assert.equal(btn.disabled, true);
+    // Settle the toggle and drain the .catch/.finally chain before the
+    // harness tears the fake document down — the finally re-renders.
+    resolveToggle();
+    await new Promise((resolve) => setImmediate(resolve));
+    btn = panelNode.querySelector(".ll-star-btn");
+    assert.equal(btn.disabled, false, "busy lock released after toggle settles");
+  });
+});

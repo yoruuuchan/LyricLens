@@ -106,11 +106,99 @@
     }
   }
 
+  // ── Song metadata (notebook songKey) ─────────────────────────────
+  //
+  // The notebook's cross-host songKey needs title/artist/durationMs,
+  // which this plugin otherwise never learns (it only tracks songId +
+  // lyrics). betterncm.ncm.getPlaying() throws on this build, so the
+  // dependable source is NCM's own song/detail endpoint — same origin,
+  // same cookies, same rate budget as the lyric fallback above.
+
+  const NCM_DETAIL_API_BASE = "https://music.163.com/api/song/detail";
+
+  function buildDetailApiUrl(songId) {
+    if (songId === null || songId === undefined) return null;
+    const normalized = String(songId).trim();
+    if (!PURE_DIGITS_RE.test(normalized)) return null;
+    return `${NCM_DETAIL_API_BASE}?ids=[${normalized}]`;
+  }
+
+  // Normalize either detail shape (v1: artists/duration, v3: ar/dt)
+  // into {title, artist, durationMs} — artists joined with " / ", the
+  // same separator NCM itself reports to SMTC, keeping the desktop
+  // host's songKey for the same track identical.
+  function normalizeSongDetail(song) {
+    if (!song || typeof song !== "object") return null;
+    const title = String(song.name ?? "").trim();
+    const artistList = Array.isArray(song.artists)
+      ? song.artists
+      : Array.isArray(song.ar)
+        ? song.ar
+        : [];
+    const artist = artistList
+      .map((a) => String(a?.name ?? "").trim())
+      .filter(Boolean)
+      .join(" / ");
+    const durationMs = Number(song.duration ?? song.dt);
+    if (!title || !artist || !Number.isFinite(durationMs) || durationMs <= 0) return null;
+    return { title, artist, durationMs };
+  }
+
+  // Returns {title, artist, durationMs} or null when the song can't be
+  // resolved. Throws on network/timeout/HTTP errors like the lyric path.
+  async function fetchSongDetail(songId, options = {}) {
+    const url = buildDetailApiUrl(songId);
+    if (!url) return null;
+    const fetcher = options.fetchImpl || root.fetch;
+    if (typeof fetcher !== "function") return null;
+
+    const timeoutMs = Number.isFinite(Number(options.timeoutMs))
+      ? Number(options.timeoutMs)
+      : DEFAULT_TIMEOUT_MS;
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+
+    try {
+      const response = await fetcher(url, {
+        method: "GET",
+        credentials: "include",
+        signal: controller.signal
+      });
+      if (!response.ok) {
+        const err = new Error(`NCM detail API HTTP ${response.status}`);
+        err.name = "NcmDetailApiHttpError";
+        err.status = response.status;
+        throw err;
+      }
+      const data = await response.json();
+      if (data?.code !== 200) return null;
+      const song = Array.isArray(data.songs) ? data.songs[0] : null;
+      return normalizeSongDetail(song);
+    } catch (err) {
+      if (timedOut) {
+        const tErr = new Error(`NCM detail API timeout after ${timeoutMs}ms`);
+        tErr.name = "NcmDetailApiTimeout";
+        throw tErr;
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   const api = {
     NCM_LYRIC_API_BASE,
+    NCM_DETAIL_API_BASE,
     DEFAULT_TIMEOUT_MS,
     buildLyricApiUrl,
-    fetchLyricsForSongId
+    buildDetailApiUrl,
+    normalizeSongDetail,
+    fetchLyricsForSongId,
+    fetchSongDetail
   };
 
   root.LyricLens = root.LyricLens || {};
