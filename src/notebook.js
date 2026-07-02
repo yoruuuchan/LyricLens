@@ -700,6 +700,80 @@
     return summary;
   }
 
+  // ── File I/O (export to disk, import from text) ──────────────────
+  //
+  // Probe B's ruling: exports go through betterncm.fs.writeFile to a
+  // findable folder (<BetterNCM data dir>/lyriclens-exports/), because
+  // <a download> behavior on the orpheus:// origin is unverified. The
+  // betterncm surface is injectable for tests.
+
+  function pad2(n) {
+    return String(n).padStart(2, "0");
+  }
+
+  // Local-date filename, matching the desktop host's save-dialog
+  // default (lyriclens-notebook-YYYY-MM-DD.{json|tsv}).
+  function buildExportFilename(format, nowMs) {
+    const d = new Date(isFiniteNumber(nowMs) ? nowMs : Date.now());
+    const stamp = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    return `lyriclens-notebook-${stamp}.${format === "anki" ? "tsv" : "json"}`;
+  }
+
+  async function resolveExportDir(betterncm) {
+    let base = null;
+    try {
+      const fn = betterncm?.app?.getDataPath;
+      if (typeof fn === "function") base = await fn.call(betterncm.app);
+    } catch (_) {}
+    const dir = base ? `${String(base).replace(/[\\/]+$/, "")}/lyriclens-exports` : "./lyriclens-exports";
+    try {
+      const mkdir = betterncm?.fs?.mkdir;
+      if (typeof mkdir === "function") await mkdir.call(betterncm.fs, dir);
+    } catch (_) {
+      // Already exists (or unsupported) — writeFile decides for real.
+    }
+    return dir;
+  }
+
+  // format: "json" | "anki". Returns {ok, path, count} on success,
+  // {ok: false, error} on any failure — callers surface, never throw.
+  async function exportToFile(format, opts = {}) {
+    const betterncm = opts.betterncm || root.betterncm;
+    const writeFile = betterncm?.fs?.writeFile;
+    if (typeof writeFile !== "function") {
+      return { ok: false, error: "betterncm.fs.writeFile 不可用" };
+    }
+    try {
+      const entries = listEntries();
+      const nowMs = isFiniteNumber(opts.nowMs) ? opts.nowMs : Date.now();
+      const content = format === "anki"
+        ? buildAnkiTsv(entries)
+        : `${JSON.stringify(buildExportEnvelope(entries, nowMs), null, 2)}\n`;
+      const dir = await resolveExportDir(betterncm);
+      const path = `${dir}/${buildExportFilename(format, nowMs)}`;
+      const BlobCtor = root.Blob || (typeof Blob !== "undefined" ? Blob : null);
+      const payload = BlobCtor
+        ? new BlobCtor([content], { type: format === "anki" ? "text/tab-separated-values" : "application/json" })
+        : content;
+      await writeFile.call(betterncm.fs, path, payload);
+      return { ok: true, path, count: entries.length };
+    } catch (err) {
+      return { ok: false, error: String(err?.message || err) };
+    }
+  }
+
+  // Parse + merge a pasted/picked export file. Returns {ok, summary}
+  // or {ok: false, error} (unknown schema, JSON syntax, …).
+  function importFromText(text, opts = {}) {
+    try {
+      const envelope = parseImportEnvelope(text);
+      const summary = importEntries(envelope, opts);
+      return { ok: true, summary };
+    } catch (err) {
+      return { ok: false, error: String(err?.message || err) };
+    }
+  }
+
   // ── Test hooks ───────────────────────────────────────────────────
 
   function _setPersistenceForTest(fake) {
@@ -741,6 +815,9 @@
     updateUserNote,
     removeMany,
     importEntries,
+    buildExportFilename,
+    exportToFile,
+    importFromText,
     _setPersistenceForTest
   };
 
