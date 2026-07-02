@@ -983,6 +983,10 @@
   // substring probes after. Every hit is reported by the caller's
   // diagnostics so a miss round returns real selector intel.
   const PLAYBAR_TITLE_SELECTORS = [
+    // corona (NCM 3.x mini bar, verified on-device 2026-07-02): the
+    // .title div holds the bare song name — its .main-title parent
+    // would also swallow the sibling VIP tag's text.
+    "footer .title-container .main-title .title",
     ".m-playbar .name",
     ".m-playbar .j-title",
     ".m-playbar .words .name",
@@ -991,6 +995,9 @@
     ".btmbar .name"
   ];
   const PLAYBAR_ARTIST_SELECTORS = [
+    // corona: .author's textContent joins artists with " / " — the
+    // same separator NCM feeds SMTC, so the songKey matches desktop.
+    "footer .title-container .author",
     ".m-playbar .by",
     ".m-playbar .words .by",
     '[class*="playbar"] [class*="artist"]',
@@ -1040,6 +1047,33 @@
       };
     }
     return null;
+  }
+
+  // The mini bar's tracker payload carries the cloud song id (s_cid)
+  // even for local files NCM matched against the cloud library — the
+  // only numeric-id source proven alive on this build (PlayState dead,
+  // getPlaying() throws, mediaSession empty). Verified on-device:
+  // <div id="page_pc_mini_bar" data-log='{"params":{"s_cid":"...",
+  // "s_ctype":"song"}}'>.
+  function readMiniBarSongId(context = root) {
+    const doc = context?.document;
+    if (!doc?.querySelector) return null;
+    let node = null;
+    try {
+      node = doc.querySelector("#page_pc_mini_bar[data-log]") || doc.querySelector('[data-log*="s_cid"]');
+    } catch (_) {
+      return null;
+    }
+    const raw = node?.getAttribute?.("data-log");
+    if (!raw) return null;
+    try {
+      const params = JSON.parse(raw)?.params;
+      if (params?.s_ctype && params.s_ctype !== "song") return null;
+      const cid = String(params?.s_cid ?? "").trim();
+      return /^\d{1,18}$/.test(cid) ? cid : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   // Poll NCM's progress-bar <input>.max — the track duration in seconds —
@@ -1152,7 +1186,8 @@
     startProgressDurationMonitor,
     classifyDurationChange,
     readTrackDurationMs,
-    readNowPlayingMeta
+    readNowPlayingMeta,
+    readMiniBarSongId
   };
 
   root.LyricLens = root.LyricLens || {};
