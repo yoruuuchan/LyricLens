@@ -596,3 +596,74 @@ test("classifyDurationChange: same-length consecutive songs (rare) do not fire",
 test("startProgressDurationMonitor is exported as a function", () => {
   assert.equal(typeof Sync.startProgressDurationMonitor, "function");
 });
+
+// ── Now-playing metadata (notebook songKey, id-free) ──
+
+// Fake DOM contexts: no `contains` on the doc so the module-level
+// slider cache self-invalidates between tests.
+function makeSliderContext(max, value = "10") {
+  const slider = {
+    getAttribute: (name) => (name === "max" ? max : null),
+    value
+  };
+  return {
+    document: {
+      querySelectorAll: (sel) => (sel === ".slider-default input" ? [slider] : [])
+    }
+  };
+}
+
+test("readTrackDurationMs: slider max (seconds) → ms, rounded", () => {
+  assert.equal(Sync.readTrackDurationMs(makeSliderContext("247.9")), 247900);
+  assert.equal(Sync.readTrackDurationMs(makeSliderContext("234")), 234000);
+});
+
+test("readTrackDurationMs: volume-range and missing sliders → null", () => {
+  // max=1 fails the plausibility gate (volume slider).
+  assert.equal(Sync.readTrackDurationMs(makeSliderContext("1")), null);
+  // No max attribute at all → NaN → null.
+  assert.equal(Sync.readTrackDurationMs(makeSliderContext(null)), null);
+  // No document → null.
+  assert.equal(Sync.readTrackDurationMs({}), null);
+});
+
+test("readNowPlayingMeta: mediaSession wins when complete", () => {
+  const context = {
+    navigator: { mediaSession: { metadata: { title: " Brave Shine ", artist: "Aimer" } } },
+    document: {
+      querySelector: () => ({ textContent: "should not be reached" })
+    }
+  };
+  assert.deepEqual(Sync.readNowPlayingMeta(context), {
+    title: "Brave Shine",
+    artist: "Aimer",
+    source: "mediaSession"
+  });
+});
+
+test("readNowPlayingMeta: falls back to playbar DOM, skipping clock-like text", () => {
+  // First title selector hits a clock string (03:24) — must be skipped
+  // in favor of the next selector that has real text.
+  const byNode = {
+    ".m-playbar .name": { textContent: "03:24" },
+    ".m-playbar .j-title": { textContent: "One Last Kiss" },
+    ".m-playbar .by": { textContent: "宇多田ヒカル" }
+  };
+  const context = {
+    navigator: { mediaSession: { metadata: { title: "OnlyTitle", artist: "" } } },
+    document: { querySelector: (sel) => byNode[sel] || null }
+  };
+  assert.deepEqual(Sync.readNowPlayingMeta(context), {
+    title: "One Last Kiss",
+    artist: "宇多田ヒカル",
+    source: "dom(.m-playbar .j-title + .m-playbar .by)"
+  });
+});
+
+test("readNowPlayingMeta: nothing available → null", () => {
+  assert.equal(Sync.readNowPlayingMeta({}), null);
+  assert.equal(
+    Sync.readNowPlayingMeta({ document: { querySelector: () => null } }),
+    null
+  );
+});

@@ -19,11 +19,11 @@
   let currentSongId = null;
   let suppressedSongId = null;
   let currentAnalysis = null;
-  // Song metadata for the notebook's cross-host songKey, resolved via
-  // getPlayingSong()/detail-API on song change (and lazily on first
-  // star). {songId, title, artist, durationMs, songKey} or null.
+  // Song metadata for the notebook's cross-host songKey, resolved from
+  // mediaSession/playbar/slider (id-free) with getPlayingSong + the
+  // detail API as fill-ins. {songId, title, artist, durationMs, source,
+  // songKey} or null.
   let notebookSongMeta = null;
-  let notebookSongMetaPromise = null;
   let activeController = null;
   let activeRequestId = 0;
   let lastProgressMs = 0;
@@ -166,10 +166,7 @@
       onInstallUpdate: (payload) => triggerUpdateInstall(payload),
       onRequestRestart: () => triggerRestart(),
       onStarToggle: handleStarToggle,
-      getNotebookSongKey: () =>
-        notebookSongMeta && notebookSongMeta.songId === currentSongId
-          ? notebookSongMeta.songKey
-          : null
+      getNotebookSongKey: () => currentNotebookSongKey()
     });
     if (diagnostics.enabled()) panel.mountDebugPanel();
 
@@ -330,28 +327,32 @@
       .catch((err) => Utils.warn("notebook bootstrap 异常", err));
   }
 
-  // Resolve title/artist/durationMs for the notebook songKey. Prefers
-  // the synchronous betterncm.ncm.getPlayingSong() (zero network, works
-  // offline); falls back to NCM's song/detail endpoint — getPlaying()
-  // throws on this build (see the AMLL-probe comment in bootstrap), so
-  // the sibling API may be equally dead and the fetch path is the one
-  // we trust. Cached per songId; concurrent callers share one promise.
+  // Resolve title/artist/durationMs for the notebook songKey. On this
+  // build every songId channel is unreliable (PlayState dead,
+  // getPlaying() throws, captured lyrics carry provisional ids), so the
+  // chain leads with sources that need no id at all: mediaSession —
+  // the exact object NCM feeds Windows SMTC, i.e. byte-identical to
+  // what the desktop host reads — with playbar DOM as fallback, plus
+  // the progress slider for duration. getPlayingSong and the detail
+  // API only fill whatever is still missing.
   async function resolveNotebookSongMeta(songId) {
-    if (!songId) return null;
-    if (notebookSongMeta && notebookSongMeta.songId === songId) return notebookSongMeta;
-    if (notebookSongMetaPromise?.songId === songId) return notebookSongMetaPromise.promise;
+    const live = Sync?.readNowPlayingMeta?.() || null;
+    let title = live?.title || "";
+    let artist = live?.artist || "";
+    let durationMs = Sync?.readTrackDurationMs?.() ?? null;
+    let source = live?.source || null;
 
-    const promise = (async () => {
-      let resolved = null;
+    if (!title || !artist || !durationMs) {
       try {
         const raw = root.betterncm?.ncm?.getPlayingSong?.();
         const song = raw?.data ?? raw;
         const normalized = NcmLyricApi?.normalizeSongDetail?.(song);
-        // Only trust the live object when it belongs to the song we're
-        // resolving — getPlayingSong may lag a fast song switch.
-        const liveId = String(song?.id ?? raw?.id ?? "");
-        if (normalized && (!liveId || liveId === String(songId))) resolved = normalized;
-        else if (song && typeof song === "object") {
+        if (normalized) {
+          title = title || normalized.title;
+          artist = artist || normalized.artist;
+          durationMs = durationMs || normalized.durationMs;
+          source = source ? `${source}+getPlayingSong` : "getPlayingSong";
+        } else if (song && typeof song === "object") {
           // Shape diagnostics: which keys does this build actually
           // expose? One console line beats a blind guessing round.
           console.log("[LyricLens:notebook]", "getPlayingSong 形状不认识（keys）", Object.keys(song).slice(0, 20).join(","));
@@ -360,24 +361,56 @@
         // getPlayingSong throwing is expected on this build.
         console.log("[LyricLens:notebook]", "getPlayingSong 不可用", String(err?.message || err));
       }
-      if (!resolved && NcmLyricApi?.fetchSongDetail) {
-        resolved = await NcmLyricApi.fetchSongDetail(songId);
-      }
-      if (!resolved) return null;
-      const meta = {
-        songId,
-        ...resolved,
-        songKey: Notebook?.makeSongKey?.(resolved.title, resolved.artist, resolved.durationMs) || null
-      };
-      if (currentSongId === songId) notebookSongMeta = meta;
-      return meta;
-    })();
-    notebookSongMetaPromise = { songId, promise };
-    try {
-      return await promise;
-    } finally {
-      if (notebookSongMetaPromise?.songId === songId) notebookSongMetaPromise = null;
     }
+
+    if ((!title || !artist || !durationMs) && NcmLyricApi?.fetchSongDetail) {
+      // Last resort and the only step that needs a real numeric id —
+      // provisional/captured ids return null inside without a request.
+      const fetched = await NcmLyricApi.fetchSongDetail(songId);
+      if (fetched) {
+        title = title || fetched.title;
+        artist = artist || fetched.artist;
+        durationMs = durationMs || fetched.durationMs;
+        source = source ? `${source}+detailApi` : "detailApi";
+      }
+    }
+
+    if (!title || !artist || !durationMs) {
+      console.warn("[LyricLens:notebook]", "song meta 解析失败（各来源都缺件）", {
+        songId,
+        hasTitle: Boolean(title),
+        hasArtist: Boolean(artist),
+        durationMs
+      });
+      return null;
+    }
+
+    const meta = {
+      songId: songId ?? null,
+      title,
+      artist,
+      durationMs,
+      source,
+      songKey: Notebook?.makeSongKey?.(title, artist, durationMs) || null
+    };
+    // One line per resolve: proves on-device which channel is alive.
+    console.log("[LyricLens:notebook]", "song meta", { title, artist, durationMs, source, songKey: meta.songKey });
+    // Live sources are read at call time, so the only staleness window
+    // is the detail-API await — don't cache across a mid-await switch.
+    if (songId === currentSongId) notebookSongMeta = meta;
+    return meta;
+  }
+
+  // Render-time star state (isStarred on cards). Recomputed from live
+  // sources every render so it works before any resolve has completed
+  // and never goes stale across song switches.
+  function currentNotebookSongKey() {
+    const live = Sync?.readNowPlayingMeta?.() || null;
+    const durationMs = Sync?.readTrackDurationMs?.() ?? null;
+    if (live?.title && live?.artist && durationMs && Notebook?.makeSongKey) {
+      return Notebook.makeSongKey(live.title, live.artist, durationMs);
+    }
+    return notebookSongMeta?.songKey || null;
   }
 
   // Star toggle from the card's star button. Resolves song metadata
@@ -1394,7 +1427,6 @@
       // snapshot; prefetch the new song's in the background so the
       // star state on cards resolves without a click-time fetch.
       notebookSongMeta = null;
-      notebookSongMetaPromise = null;
       resolveNotebookSongMeta(songId).catch(() => {});
       lastLineIndex = null;
       currentAnalyzeKey = null;
