@@ -43,7 +43,7 @@
 import { writeFile, mkdir, readFile } from "node:fs/promises";
 import { existsSync, createReadStream, createWriteStream } from "node:fs";
 import { createHash } from "node:crypto";
-import { brotliCompressSync, constants as zlibConst } from "node:zlib";
+import { brotliCompressSync, gzipSync, constants as zlibConst } from "node:zlib";
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -290,7 +290,7 @@ function buildEnvelope({ entries, shas, generatedAt }) {
   };
 }
 
-function buildManifest({ buildKey, blobName, sha256Hex, byteLen, shas, generatedAt }) {
+function buildManifest({ buildKey, blobName, sha256Hex, byteLen, gz, shas, generatedAt }) {
   return {
     name: DATA_TAG,
     schema: SCHEMA_VERSION,
@@ -304,6 +304,11 @@ function buildManifest({ buildKey, blobName, sha256Hex, byteLen, shas, generated
         source: `cet-word-list@${shas["cet-word-list"]} + ECDICT@${shas.ECDICT} + word3500@${shas.word3500}`,
         sha256: sha256Hex,
         bytes: byteLen,
+        gzip: {
+          url: `${BLOB_URL_BASE}/${gz.name}`,
+          sha256: gz.sha256,
+          bytes: gz.bytes,
+        },
       },
     },
   };
@@ -397,11 +402,20 @@ async function main() {
   console.log(`blob sha256: ${sha}`);
 
   const blobName = `enexam-tags.${buildKey}.json.br`;
+  // gzip variant for the BetterNCM plugin host — its Chromium 91 has no
+  // brotli decoder (DecompressionStream is gzip/deflate only). The .br
+  // blob stays canonical for the desktop host; manifest field is additive.
+  const gzName = blobName.replace(/\.br$/, ".gz");
+  const gzBuf = gzipSync(jsonCompactBuf, { level: 9 });
+  const gzSha = sha256Hex(gzBuf);
+  const gzRatio = ((gzBuf.length / jsonCompactBuf.length) * 100).toFixed(1);
+  console.log(`gzip level 9: ${gzBuf.length} bytes (${gzRatio}% of raw), sha256: ${gzSha}`);
   const manifest = buildManifest({
     buildKey,
     blobName,
     sha256Hex: sha,
     byteLen: brBuf.length,
+    gz: { name: gzName, sha256: gzSha, bytes: gzBuf.length },
     shas,
     generatedAt,
   });
@@ -409,6 +423,7 @@ async function main() {
   if (args.dryRun) {
     console.log("--dry-run: skipping writes");
     console.log(`would write: ${join(OUT_DIR, blobName)}`);
+    console.log(`would write: ${join(OUT_DIR, gzName)}`);
     console.log(`would write: ${join(OUT_DIR, "manifest.json")}`);
     console.log(`would write: ${join(OUT_DIR, "dropped.txt")}`);
     return;
@@ -418,6 +433,7 @@ async function main() {
 
   const jsonOut = join(OUT_DIR, blobName.replace(/\.br$/, ""));
   const brOut = join(OUT_DIR, blobName);
+  const gzOut = join(OUT_DIR, gzName);
   const manifestOut = join(OUT_DIR, "manifest.json");
   const droppedOut = join(OUT_DIR, "dropped.txt");
 
@@ -429,11 +445,13 @@ async function main() {
 
   await writeFile(jsonOut, jsonPretty, "utf8");
   await writeFile(brOut, brBuf);
+  await writeFile(gzOut, gzBuf);
   await writeFile(manifestOut, JSON.stringify(manifest, null, 2) + "\n", "utf8");
   await writeFile(droppedOut, droppedText, "utf8");
 
   console.log(`wrote: ${jsonOut}`);
   console.log(`wrote: ${brOut}`);
+  console.log(`wrote: ${gzOut}`);
   console.log(`wrote: ${manifestOut}`);
   console.log(`wrote: ${droppedOut}`);
 }
