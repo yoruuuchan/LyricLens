@@ -34,7 +34,7 @@
 ## 当前阶段地图
 
 ```
-阶段 1 · 分发基建（80% 完成）
+阶段 1 · 分发基建
 ├─ ✅ Probe A · BetterNCM 自更新能力
 ├─ ✅ Probe B · IndexedDB 持久化
 ├─ ✅ Probe C · Cloudflare Worker + 子域名
@@ -42,21 +42,32 @@
 ├─ ✅ Task #10 · build 固定文件名
 └─ ⏳ Task #2 · 插件内一键检查更新（前置都通了）
 
-阶段 2 · 双轨地基（关键阶段，所有后续都吃它）
-├─ ⏳ Task #15 · core 抽取 + 双 host interface 设计 ← 核心
-├─ ⏳ Task #16 · LyricSource pluggable interface（NCM = source 1）
-├─ ⏳ Task #18 · 跨 host 数据互通格式（plugin ↔ desktop import/export）
+阶段 2 · 双轨地基
 ├─ ✅ Probe D · Now Playing API 覆盖率（task #13，SMTC/MRMR/MPRIS）
 ├─ ✅ Probe E · 歌词反查命中率 benchmark（task #14）
-└─ ⏳ Task #4 · 自定义 prompt + 知识点勾选（PR #4 draft，等最终真机验收/merge）
+├─ ✅ Task #4 · 自定义 prompt + 知识点勾选
+├─ ✅ Task #16 · LyricSource 已按 host 分流（插件 NCM 内存；桌面 SMTC + LRCLIB）
+└─ ⏳ Task #15 · core 抽取（继续延后，等接口稳定后再做）
 
 阶段 3 · 学习闭环
-├─ ⏳ Task #5 · 词库 CDN
-└─ ⏳ Task #6 · 收藏 + 词频 + 等级 + 导出（plugin 端 IDB / desktop 端 SQLite）
+├─ ✅ Task #5 · 词库 CDN（dicts.yoru-and-akari.dev）
+├─ ✅ JLPT 参考等级 badge
+├─ ✅ 英语考试标签 badge（高考 / CET-4 / CET-6 / 考研）
+├─ ✅ CEFR-J 参考等级 badge
+├─ ✅ Task #6 · 笔记本式收藏（插件 IDB / 桌面 SQLite）
+├─ ✅ JSON 导入/导出 + Anki TSV
+└─ ✅ mastery v1.1 只读进度字段
 
 阶段 4 · 独立桌面版（任务 #17）
-└─ ⏳ Tauri companion 从查看器升级为独立产品
-   带 SMTC reader、LRCLIB client、SQLite、独立 UI、.msi 安装包
+└─ ✅ Tauri companion 已升级为独立产品
+   SMTC reader、LRCLIB client、SQLite、独立 UI、.msi 安装包全部落地
+
+阶段 5 · 跨 host 验证
+├─ ⏳ 插件导出 → 桌面导入
+├─ ⏳ 桌面导出 → 插件导入
+├─ ⏳ 同一首歌两端 star 的 songKey 字节对齐实测
+├─ ⏳ Anki TSV 真导入 Anki smoke
+└─ ✅ NotebookEntry conformance 对拍套件
 
 阶段 ∞ · 商业化（不一定做）
 ```
@@ -97,7 +108,7 @@
 
 ## ⚠️ 当前 IN-PROGRESS
 
-**`HANDOFF-2026-06-30-session2.md` 是最新交接，先读它再做任何事。**
+Stage 5 真机链路验证待做：插件导出→桌面导入、桌面导出→插件导入、同曲 songKey 字节对齐、Anki TSV 真导入。
 
 ## 关键参考文档
 

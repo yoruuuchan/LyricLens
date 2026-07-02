@@ -13,6 +13,16 @@ tag 含义：`[plan]` 路线决策 / `[probe]` probe 结果 / `[ship]` 产品功
 
 ---
 
+## 2026-07-02 [ship] 跨 host notebook conformance 套件落地并对齐 JSON key order
+
+Codex 按 cross-host brief 完成 NotebookEntry v1.1 对拍：桌面仓库新增 ignored Rust generator，主仓库新增 `tests/fixtures/cross-host/` golden 与 `tests/cross-host.test.js`。覆盖 makeSongKey、export entries、Anki TSV、merge 8 条分支、validate 拒绝集、import 混合批次。
+
+- 初跑抓到 JSON key order mismatch：桌面 export golden 的 `entries[]` 经 `serde_json::Value` 输出为桌面当前顺序，插件 `serializeEntry()` 输出为旧 schema 手写顺序。Yoru 拍板「插件改，对齐桌面」。
+- 只重排 `src/notebook.js` 的 `serializeEntry` 字段书写顺序，值、省略规则、merge/import/Anki 逻辑不动；插件既有 key-order 断言同步更新。
+- 桌面 generator 的 merge/import golden entries 也统一走同一套桌面 export-order JSON，避免同一 conformance fixture 内部有两种 key order。
+
+验证：插件 `npm run build` 通过，`npm test` **406/406 全绿**；桌面 `cargo test` 通过，`npm run build` 通过。下一步回到 Stage 5 真机链路：两端互导、同曲 songKey、Anki TSV 真导入。
+
 ## 2026-07-02 [ship] 插件版笔记本 + mastery 上线 — 四件套双 host 收官
 
 插件版笔记本 vertical 一个 session 从 plan 到真机验收收官：IDB store + star + 备注 + JSON/Anki 导出 + JSON 导入合并 + mastery 四色 dot（[#26](https://github.com/yoruuuchan/LyricLens/pull/26)/[#27](https://github.com/yoruuuchan/LyricLens/pull/27)/[#28](https://github.com/yoruuuchan/LyricLens/pull/28)）→ 部署 NCM → 星标按钮真机三轮修复（[#29](https://github.com/yoruuuchan/LyricLens/pull/29)/[#30](https://github.com/yoruuuchan/LyricLens/pull/30)/[#31](https://github.com/yoruuuchan/LyricLens/pull/31)）→ **真机验收通过（Yoru 确认）**。至此四件套（词库三件套 + 笔记本）双 host 全部落地，插件↔桌面数据经 JSON import/export 互通。
