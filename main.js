@@ -2,7 +2,7 @@
   "use strict";
 
   const LL = root.LyricLens || {};
-  const { Utils, Lyrics, Detect, Api, Cache, Sync, Settings, Panel, Diagnostics, Styles, Capture, Bridge, NcmLyricApi, Dicts } = LL;
+  const { Utils, Lyrics, Detect, Api, Cache, Sync, Settings, Panel, Diagnostics, Styles, Capture, Bridge, NcmLyricApi, Dicts, Notebook } = LL;
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   let settings = Settings.DEFAULT_SETTINGS;
@@ -19,6 +19,11 @@
   let currentSongId = null;
   let suppressedSongId = null;
   let currentAnalysis = null;
+  // Song metadata for the notebook's cross-host songKey, resolved via
+  // getPlayingSong()/detail-API on song change (and lazily on first
+  // star). {songId, title, artist, durationMs, songKey} or null.
+  let notebookSongMeta = null;
+  let notebookSongMetaPromise = null;
   let activeController = null;
   let activeRequestId = 0;
   let lastProgressMs = 0;
@@ -159,7 +164,12 @@
       onStateChange: handlePanelStateChange,
       onCheckUpdate: () => triggerUpdateCheck({ silent: false }),
       onInstallUpdate: (payload) => triggerUpdateInstall(payload),
-      onRequestRestart: () => triggerRestart()
+      onRequestRestart: () => triggerRestart(),
+      onStarToggle: handleStarToggle,
+      getNotebookSongKey: () =>
+        notebookSongMeta && notebookSongMeta.songId === currentSongId
+          ? notebookSongMeta.songKey
+          : null
     });
     if (diagnostics.enabled()) panel.mountDebugPanel();
 
@@ -282,6 +292,7 @@
     scheduleStartupUpdateCheck();
 
     scheduleDictsBootstrap();
+    scheduleNotebookBootstrap();
   }
 
   // Dictionary stores for the vocabulary badges (JLPT / 考试标签 / CEFR-J).
@@ -302,6 +313,95 @@
         })
         .catch((err) => Utils.warn("dicts bootstrap 异常", err));
     }, 3000);
+  }
+
+  // Notebook store (IndexedDB, local) — no network, so no deferral like
+  // the dicts. Failure degrades inside Notebook (star buttons don't
+  // render, notebook view shows the degraded copy) and never blocks.
+  function scheduleNotebookBootstrap() {
+    if (!Notebook?.bootstrap) return;
+    Notebook.bootstrap()
+      .then((diag) => {
+        diagnostics?.updateState?.({ notebookStatus: diag?.status || null, notebookCount: diag?.count ?? null });
+        // A card may already be on screen; repaint so its star slot
+        // hydrates now that the store can answer.
+        panel?.rerender?.();
+      })
+      .catch((err) => Utils.warn("notebook bootstrap 异常", err));
+  }
+
+  // Resolve title/artist/durationMs for the notebook songKey. Prefers
+  // the synchronous betterncm.ncm.getPlayingSong() (zero network, works
+  // offline); falls back to NCM's song/detail endpoint — getPlaying()
+  // throws on this build (see the AMLL-probe comment in bootstrap), so
+  // the sibling API may be equally dead and the fetch path is the one
+  // we trust. Cached per songId; concurrent callers share one promise.
+  async function resolveNotebookSongMeta(songId) {
+    if (!songId) return null;
+    if (notebookSongMeta && notebookSongMeta.songId === songId) return notebookSongMeta;
+    if (notebookSongMetaPromise?.songId === songId) return notebookSongMetaPromise.promise;
+
+    const promise = (async () => {
+      let resolved = null;
+      try {
+        const raw = root.betterncm?.ncm?.getPlayingSong?.();
+        const song = raw?.data ?? raw;
+        const normalized = NcmLyricApi?.normalizeSongDetail?.(song);
+        // Only trust the live object when it belongs to the song we're
+        // resolving — getPlayingSong may lag a fast song switch.
+        const liveId = String(song?.id ?? raw?.id ?? "");
+        if (normalized && (!liveId || liveId === String(songId))) resolved = normalized;
+      } catch (_) {
+        // getPlayingSong throwing is expected on this build.
+      }
+      if (!resolved && NcmLyricApi?.fetchSongDetail) {
+        resolved = await NcmLyricApi.fetchSongDetail(songId);
+      }
+      if (!resolved) return null;
+      const meta = {
+        songId,
+        ...resolved,
+        songKey: Notebook?.makeSongKey?.(resolved.title, resolved.artist, resolved.durationMs) || null
+      };
+      if (currentSongId === songId) notebookSongMeta = meta;
+      return meta;
+    })();
+    notebookSongMetaPromise = { songId, promise };
+    try {
+      return await promise;
+    } finally {
+      if (notebookSongMetaPromise?.songId === songId) notebookSongMetaPromise = null;
+    }
+  }
+
+  // Star toggle from the card's star button. Resolves song metadata
+  // (may hit the detail API on first star), then stars or unstars the
+  // business key. The panel marks the line busy for the duration and
+  // re-renders afterwards; store failures just warn.
+  async function handleStarToggle(card, lineIndex) {
+    if (!Notebook?.isReady?.()) return;
+    const songId = currentSongId;
+    const meta = await resolveNotebookSongMeta(songId);
+    if (!meta || !meta.songKey) {
+      Utils.warn("拿不到当前歌曲信息（标题/歌手/时长），这次收藏没有成功");
+      return;
+    }
+    if (songId !== currentSongId) return; // song flipped mid-resolve
+    const existing = Notebook.getByBusinessKey(meta.songKey, lineIndex);
+    if (existing) {
+      Notebook.unstar(existing.id);
+      return;
+    }
+    const snapshot = Notebook.normalizeCardSnapshot(card);
+    const lineText = String(card?.original ?? card?.line ?? "").trim() || "♪";
+    Notebook.starEntry({
+      songKey: meta.songKey,
+      songTitle: meta.title,
+      songArtist: meta.artist,
+      lineIndex,
+      lineText,
+      card: snapshot
+    });
   }
 
   const handleRuntimeLyricsCapturedDebounced = Utils.debounce((detail) => {
@@ -1281,6 +1381,12 @@
       console.log("[LyricLens:song-change]", { from: currentSongId, to: songId, hasPrevSig: Boolean(previousSongLyricsSignature) });
       suppressedSongId = null;
       currentAnalysis = null;
+      // Stale song meta must not leak into the next song's star
+      // snapshot; prefetch the new song's in the background so the
+      // star state on cards resolves without a click-time fetch.
+      notebookSongMeta = null;
+      notebookSongMetaPromise = null;
+      resolveNotebookSongMeta(songId).catch(() => {});
       lastLineIndex = null;
       currentAnalyzeKey = null;
       displayedAnalyzeKey = null;

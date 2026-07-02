@@ -269,6 +269,10 @@
 }
 
 .ll-current-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 11px;
   color: var(--ll-text-muted);
   font-family: var(--ll-font-mono);
@@ -1217,6 +1221,261 @@
   border-top: 1px solid var(--ll-line);
   margin: 12px 0;
 }
+
+/* ── Notebook: star button ─────────────────────────────────────── */
+
+.ll-star-slot { display: inline-flex; }
+
+.ll-star-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 9px;
+  padding: 0;
+  color: var(--ll-text-muted);
+  background: transparent;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.ll-star-btn svg { width: 15px; height: 15px; }
+.ll-star-btn:hover { color: var(--ll-text); background: var(--ll-hover); }
+.ll-star-btn.ll-is-on { color: var(--ll-primary); }
+.ll-star-btn.ll-is-on svg { fill: currentColor; }
+.ll-star-btn:disabled { color: var(--ll-text-disabled); cursor: default; }
+
+/* ── Notebook: view ────────────────────────────────────────────── */
+
+.ll-notebook {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  padding: 14px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ll-line-strong) transparent;
+}
+
+.ll-nb-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ll-nb-count {
+  color: var(--ll-text-muted);
+  font-size: var(--ll-type-2xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.ll-nb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ll-nb-entry {
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: var(--ll-surface);
+  box-shadow: var(--ll-shadow-raised);
+}
+
+.ll-nb-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ll-text-muted);
+  font-size: var(--ll-type-2xs);
+}
+.ll-nb-song {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ll-nb-clock {
+  font-family: var(--ll-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.ll-nb-check { flex: 0 0 auto; accent-color: var(--ll-primary); }
+
+.ll-nb-hero { margin-top: 8px; }
+.ll-nb-line {
+  color: var(--ll-text);
+  font-size: var(--ll-type-md);
+  font-weight: 650;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.ll-nb-translation {
+  margin-top: 3px;
+  color: var(--ll-text-secondary);
+  font-size: var(--ll-type-sm);
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
+.ll-nb-points {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 9px;
+}
+.ll-nb-point {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: var(--ll-type-xs);
+  color: var(--ll-text-secondary);
+}
+.ll-nb-point-type {
+  flex: 0 0 auto;
+  padding: 0 7px;
+  border: 1px solid var(--ll-line-strong);
+  border-radius: 999px;
+  color: var(--ll-text-muted);
+  font-size: var(--ll-type-2xs);
+}
+.ll-nb-point-text { overflow-wrap: anywhere; }
+
+.ll-nb-llm-note {
+  margin-top: 8px;
+  color: var(--ll-text-muted);
+  font-size: var(--ll-type-xs);
+  overflow-wrap: anywhere;
+}
+
+.ll-nb-user-note {
+  margin-top: 9px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--ll-primary);
+  border-radius: 8px;
+  background: var(--ll-primary-soft);
+  color: var(--ll-text);
+  font-size: var(--ll-type-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ll-nb-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+}
+.ll-nb-stamps {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--ll-text-muted);
+  font-size: var(--ll-type-2xs);
+}
+.ll-nb-date {
+  font-family: var(--ll-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.ll-nb-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.ll-nb-actions .ll-ghost-button {
+  min-height: 28px;
+  padding: 0 9px;
+  font-size: var(--ll-type-2xs);
+}
+.ll-nb-unstar:hover { color: var(--ll-danger); }
+
+/* Mastery dot — read-only progress journal from the Android reviewer.
+   Colors mirror the desktop host: yes=success, meh=muted, no=danger,
+   new=disabled. */
+.ll-nb-mastery {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.ll-nb-mastery-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+}
+.ll-nb-mastery.mastery-yes { color: var(--ll-success); }
+.ll-nb-mastery.mastery-meh { color: var(--ll-text-muted); }
+.ll-nb-mastery.mastery-no { color: var(--ll-danger); }
+.ll-nb-mastery.mastery-new { color: var(--ll-text-disabled); }
+
+/* ── Notebook: inline note editor ──────────────────────────────── */
+
+.ll-nb-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 9px;
+}
+.ll-nb-textarea {
+  width: 100%;
+  border: 1px solid var(--ll-line-strong);
+  border-radius: 10px;
+  padding: 8px 10px;
+  color: var(--ll-text);
+  background: var(--ll-sunken);
+  font-family: var(--ll-font-ui);
+  font-size: var(--ll-type-xs);
+  line-height: 1.5;
+  resize: vertical;
+}
+.ll-nb-textarea:focus { outline: 2px solid var(--ll-primary); outline-offset: -1px; }
+.ll-nb-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ll-nb-editor-actions .ll-secondary-button,
+.ll-nb-editor-actions .ll-ghost-button {
+  min-height: 30px;
+  padding: 0 11px;
+  font-size: var(--ll-type-xs);
+}
+
+/* ── Notebook: batch bar ───────────────────────────────────────── */
+
+.ll-nb-batchbar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: var(--ll-surface);
+  box-shadow: var(--ll-shadow-raised);
+  color: var(--ll-text-secondary);
+  font-size: var(--ll-type-xs);
+}
+.ll-nb-batchbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ll-nb-batchbar .ll-secondary-button,
+.ll-nb-batchbar .ll-ghost-button {
+  min-height: 30px;
+  padding: 0 11px;
+  font-size: var(--ll-type-xs);
+}
+.ll-nb-delete.ll-is-armed { color: var(--ll-danger); }
 
 @media (prefers-reduced-motion: reduce) {
   .ll-panel *,

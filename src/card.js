@@ -80,6 +80,12 @@
       ? `${String(Math.floor(startMs / 60000)).padStart(2, "0")}:${String(Math.floor((startMs % 60000) / 1000)).padStart(2, "0")}`
       : "";
     meta.appendChild(el("span", "", `LINE ${String(lineIndex).padStart(2, "0")}${time ? `  ${time}` : ""}`));
+    // Star slot fills in a second phase (hydrateStarButtons) like the
+    // dict badges below — the star state lives in the notebook store,
+    // which this render-only module doesn't know about.
+    const starSlot = el("span", "ll-star-slot");
+    starSlot.dataset.lineIndex = String(lineIndex);
+    meta.appendChild(starSlot);
     fragment.appendChild(meta);
 
     // Prefer card.original — it's pinned to the real lyricLine.text via the
@@ -199,7 +205,59 @@
     }
   }
 
-  const api = { el, renderCard, renderHighlight, renderMessage, hydrateDictBadges };
+  // ── Star button hydration ────────────────────────────────────────
+  //
+  // Same two-phase idea as the dict badges: renderCard emits an empty
+  // slot, the panel hydrates it once per render with the current star
+  // state. options: {isStarred(lineIndex), isBusy(lineIndex),
+  // disabled, onToggle(lineIndex, button)}.
+
+  function starIcon() {
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const svg = root.document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "1.75");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("aria-hidden", "true");
+    const path = root.document.createElementNS(SVG_NS, "path");
+    path.setAttribute(
+      "d",
+      "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"
+    );
+    svg.appendChild(path);
+    return svg;
+  }
+
+  function hydrateStarButtons(rootNode, options = {}) {
+    if (!rootNode?.querySelectorAll) return;
+    for (const slot of Array.from(rootNode.querySelectorAll(".ll-star-slot"))) {
+      slot.innerHTML = "";
+      // Store unavailable (IDB bootstrap failed / still loading) → no
+      // button at all, the card otherwise renders normally.
+      if (options.disabled) continue;
+      const lineIndex = Number(slot.dataset.lineIndex);
+      if (!Number.isFinite(lineIndex)) continue;
+      const starred = Boolean(options.isStarred?.(lineIndex));
+      const busy = Boolean(options.isBusy?.(lineIndex));
+      const button = el("button", starred ? "ll-star-btn ll-is-on" : "ll-star-btn");
+      button.type = "button";
+      button.disabled = busy;
+      button.title = starred ? "取消收藏这句" : "收藏这句到笔记本";
+      button.setAttribute("aria-label", button.title);
+      button.setAttribute("aria-pressed", starred ? "true" : "false");
+      button.appendChild(starIcon());
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        options.onToggle?.(lineIndex, button);
+      });
+      slot.appendChild(button);
+    }
+  }
+
+  const api = { el, renderCard, renderHighlight, renderMessage, hydrateDictBadges, hydrateStarButtons };
   root.LyricLens = root.LyricLens || {};
   root.LyricLens.Card = api;
   if (typeof module !== "undefined" && module.exports) {

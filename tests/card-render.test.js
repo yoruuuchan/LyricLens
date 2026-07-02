@@ -8,6 +8,7 @@ function createMinimalDocument() {
       this.className = "";
       this.children = [];
       this._text = "";
+      this.dataset = {};
     }
     appendChild(child) {
       if (child && child._isFragment) {
@@ -258,5 +259,98 @@ test("hydrateDictBadges with unready stores renders no badges and is safe to re-
     // Idempotent re-run after nothing changed
     Card.hydrateDictBadges(container, { targetExam: "cet4" });
     assert.equal(container.querySelectorAll(".ll-dict-badge").length, 0);
+  });
+});
+
+// ── Star slot + hydration ────────────────────────────────────────
+//
+// Extends the badge stub with what the star button path needs:
+// attributes, event listeners, disabled, and SVG creation.
+
+function createStarDocument() {
+  const base = createBadgeDocument();
+  const upgrade = (node) => {
+    node.attributes = {};
+    node.eventListeners = {};
+    node.setAttribute = (name, value) => { node.attributes[name] = String(value); };
+    node.addEventListener = (type, handler) => { node.eventListeners[type] = handler; };
+    node.click = () => node.eventListeners.click?.({ stopPropagation: () => {} });
+    return node;
+  };
+  return {
+    createElement: (tag) => upgrade(base.createElement(tag)),
+    createElementNS: (ns, tag) => {
+      const node = upgrade(base.createElement(tag));
+      node.namespaceURI = ns;
+      return node;
+    },
+    createDocumentFragment: () => base.createDocumentFragment(),
+    makeContainer: () => upgrade(base.makeContainer())
+  };
+}
+
+function withStarHarness(run) {
+  const previous = { LyricLens: globalThis.LyricLens, document: globalThis.document };
+  const doc = createStarDocument();
+  globalThis.document = doc;
+  globalThis.LyricLens = {};
+  delete require.cache[require.resolve("../src/card")];
+  const Card = require("../src/card");
+  try {
+    run({ doc, Card });
+  } finally {
+    globalThis.LyricLens = previous.LyricLens;
+    globalThis.document = previous.document;
+    delete require.cache[require.resolve("../src/card")];
+  }
+}
+
+test("renderCard emits a star slot carrying the line index", () => {
+  withStarHarness(({ doc, Card }) => {
+    const container = doc.makeContainer();
+    container.appendChild(Card.renderCard({
+      index: 7, lineIndex: 7, original: "口を開けて", translation: "张开嘴", highlights: []
+    }, "ja"));
+    const slots = container.querySelectorAll(".ll-star-slot");
+    assert.equal(slots.length, 1);
+    assert.equal(slots[0].dataset.lineIndex, "7");
+  });
+});
+
+test("hydrateStarButtons renders on/off/busy states and routes clicks", () => {
+  withStarHarness(({ doc, Card }) => {
+    const container = doc.makeContainer();
+    container.appendChild(Card.renderCard({
+      index: 3, lineIndex: 3, original: "line", translation: "行", highlights: []
+    }, "en"));
+
+    const toggles = [];
+    Card.hydrateStarButtons(container, {
+      isStarred: (lineIndex) => lineIndex === 3,
+      isBusy: () => false,
+      onToggle: (lineIndex) => toggles.push(lineIndex)
+    });
+    let btn = container.querySelectorAll(".ll-star-btn")[0] || null;
+    assert.ok(btn, "star button rendered");
+    assert.ok(btn.hasClass("ll-is-on"));
+    assert.equal(btn.attributes["aria-pressed"], "true");
+    assert.equal(btn.disabled, false);
+    btn.click();
+    assert.deepEqual(toggles, [3]);
+
+    // Re-hydrate as unstarred + busy: state flips, button disables.
+    Card.hydrateStarButtons(container, {
+      isStarred: () => false,
+      isBusy: () => true,
+      onToggle: () => toggles.push("nope")
+    });
+    btn = container.querySelectorAll(".ll-star-btn")[0];
+    assert.ok(!btn.hasClass("ll-is-on"));
+    assert.equal(btn.disabled, true);
+    assert.equal(btn.attributes["aria-pressed"], "false");
+
+    // Store disabled → slot stays empty.
+    Card.hydrateStarButtons(container, { disabled: true });
+    assert.equal(container.querySelectorAll(".ll-star-btn").length, 0);
   });
 });
