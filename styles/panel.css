@@ -369,6 +369,17 @@
   opacity: 0.9;
 }
 
+/* Community weak labels (ielts-community / toefl-community) render a
+ * shade lighter than the twice-verified exam pills so users can tell
+ * at a glance that provenance is weaker — schema doc §UI 渲染规则.
+ * Border/text drop to the muted line/text tokens, overall opacity is
+ * lower, so it reads as "soft reference" not "wrong". */
+.ll-dict-badge--community {
+  border-color: var(--ll-line-strong);
+  color: var(--ll-text-muted);
+  opacity: 0.7;
+}
+
 .ll-dict-attribution {
   padding: 8px 0;
   border-bottom: 1px solid var(--ll-line);

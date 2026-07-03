@@ -46,7 +46,17 @@
   };
 
   const VALID_KNOWLEDGE_POINTS = ["vocabulary", "grammar", "culture", "pronunciation", "tone"];
-  const VALID_TARGET_EXAMS = ["off", "gaokao", "cet4", "cet6", "kaoyan"];
+  // Community weak labels (ielts-community / toefl-community) added
+  // 2026-07-03 v1.1 — see docs/schema/en-exam-vocab.md.
+  const VALID_TARGET_EXAMS = [
+    "off",
+    "gaokao",
+    "cet4",
+    "cet6",
+    "kaoyan",
+    "ielts-community",
+    "toefl-community"
+  ];
 
   const MODEL_PRESETS = [
     { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", model: "deepseek-ai/DeepSeek-V4-Flash" },

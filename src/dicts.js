@@ -38,14 +38,32 @@
     gaokao: "高考",
     cet4: "CET-4",
     cet6: "CET-6",
-    kaoyan: "考研"
+    kaoyan: "考研",
+    // Community weak labels — schema doc §UI 渲染规则 mandates the
+    // "-community" suffix on the tag values but the pill label stays
+    // clean; the softer visual + tooltip carry the provenance signal.
+    "ielts-community": "IELTS",
+    "toefl-community": "TOEFL"
   };
-  const TARGET_EXAMS = ["off", "gaokao", "cet4", "cet6", "kaoyan"];
+  const TARGET_EXAMS = [
+    "off",
+    "gaokao",
+    "cet4",
+    "cet6",
+    "kaoyan",
+    "ielts-community",
+    "toefl-community"
+  ];
 
   const JLPT_BADGE_TITLE = "JLPT 参考等级 · 数据来自 Bluskyo / Tanos community list";
   const JLPT_BADGE_TITLE_AMBIGUOUS =
     "JLPT 参考等级 · surface 匹配 · reading 未确认 · 数据来自 Bluskyo / Tanos community list";
   const EXAM_BADGE_TITLE = "考试参考标签 · 社区词表交叉整理 · 非官方授权";
+  // IELTS/TOEFL are ECDICT single-source weak labels (no clean roster
+  // to cross-verify against); the tooltip makes that provenance
+  // explicit and the .ll-dict-badge--community class variant renders
+  // a shade lighter — see schema doc §UI 渲染规则.
+  const COMMUNITY_EXAM_BADGE_TITLE = "社区参考 · 单源整理 · 非官方 · 数据源 ECDICT (MIT)";
   const CEFRJ_BADGE_TITLE = "CEFR-J 参考等级 · 数据 © Tono Lab (TUFS)";
 
   // family → Map(entries) once bootstrapped; null while idle/failed.
@@ -230,6 +248,7 @@
     JLPT_BADGE_TITLE,
     JLPT_BADGE_TITLE_AMBIGUOUS,
     EXAM_BADGE_TITLE,
+    COMMUNITY_EXAM_BADGE_TITLE,
     CEFRJ_BADGE_TITLE,
     bootstrapAll,
     jlptLookup,

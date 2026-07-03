@@ -248,6 +248,58 @@ test("hydrateDictBadges fills slots from ready stores and respects targetExam", 
   });
 });
 
+test("hydrateDictBadges renders IELTS/TOEFL community pills with the --community variant + softer tooltip", () => {
+  withBadgeHarness(({ doc, Dicts, Card }) => {
+    // marvellous only carries community tags; precipitate straddles
+    // both tiers so we can verify the same word switches its pill
+    // class + tooltip as targetExam moves between tiers.
+    Dicts._setStoreForTest("enexam", new Map([
+      ["marvellous", ["ielts-community", "toefl-community"]],
+      ["precipitate", ["cet6", "kaoyan", "ielts-community", "toefl-community"]]
+    ]));
+
+    const container = doc.makeContainer();
+    container.appendChild(Card.renderHighlight({
+      type: "vocabulary", text: "marvellous：了不起的", surface: "marvellous"
+    }, "en"));
+    container.appendChild(Card.renderHighlight({
+      type: "vocabulary", text: "precipitate：促使", surface: "precipitate"
+    }, "en"));
+
+    // ielts-community: both words hit; both pills read "IELTS", carry
+    // the community modifier class, and use the community tooltip.
+    Card.hydrateDictBadges(container, { targetExam: "ielts-community" });
+    const ieltsBadges = container.querySelectorAll(".ll-dict-badge");
+    assert.equal(ieltsBadges.length, 2);
+    for (const b of ieltsBadges) {
+      assert.equal(b.textContent, "IELTS");
+      assert.ok(b.hasClass("ll-dict-badge--community"), "community variant class present on IELTS pill");
+      assert.equal(b.title, Dicts.COMMUNITY_EXAM_BADGE_TITLE);
+    }
+
+    // Switching to cet6 leaves only precipitate; its pill must reset
+    // to solid style (no --community class) and the twice-verified
+    // tooltip. The marvellous slot goes empty because it lacks cet6.
+    Card.hydrateDictBadges(container, { targetExam: "cet6" });
+    const cetBadges = container.querySelectorAll(".ll-dict-badge");
+    assert.equal(cetBadges.length, 1, "only precipitate carries cet6");
+    assert.equal(cetBadges[0].textContent, "CET-6");
+    assert.ok(!cetBadges[0].hasClass("ll-dict-badge--community"), "twice-verified pill must not carry the community class");
+    assert.equal(cetBadges[0].title, Dicts.EXAM_BADGE_TITLE);
+
+    // toefl-community again to confirm the class re-attaches after a
+    // round-trip through the non-community tier.
+    Card.hydrateDictBadges(container, { targetExam: "toefl-community" });
+    const toeflBadges = container.querySelectorAll(".ll-dict-badge");
+    assert.equal(toeflBadges.length, 2);
+    for (const b of toeflBadges) {
+      assert.equal(b.textContent, "TOEFL");
+      assert.ok(b.hasClass("ll-dict-badge--community"));
+      assert.equal(b.title, Dicts.COMMUNITY_EXAM_BADGE_TITLE);
+    }
+  });
+});
+
 test("hydrateDictBadges with unready stores renders no badges and is safe to re-run", () => {
   withBadgeHarness(({ doc, Card }) => {
     const container = doc.makeContainer();
