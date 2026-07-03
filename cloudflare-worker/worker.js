@@ -1026,7 +1026,9 @@ const LANDING_HTML = `<!doctype html>
     color: var(--ink-2);
     margin: 0;
     max-width: 620px;
+    text-wrap: balance;
   }
+  .nowrap { white-space: nowrap; }
   /* Tight gap between the two lede clauses (one thought, broken at the
      period for visual rhythm). The 36px gap to the action row lives on
      .actions margin-top — keeping it off .lede sidesteps the
@@ -1696,7 +1698,7 @@ const LANDING_HTML = `<!doctype html>
     <div class="eyebrow"><span class="dot"></span>one product · three entries</div>
     <h1>lyriclens<span class="jp" lang="ja">歌詞のレンズ</span></h1>
     <p class="lede">边听歌，边把歌词变成语言学习卡片。</p>
-    <p class="lede">网易云插件、独立桌面版、手机复习器——三个入口，一本笔记本。</p>
+    <p class="lede">网易云插件、独立桌面版、手机复习器——<span class="nowrap">三个入口，一本笔记本。</span></p>
 
     <div class="status-pill" role="status" aria-label="服务运行中">
       <span class="dot" aria-hidden="true"></span>
@@ -1740,20 +1742,28 @@ const LANDING_HTML = `<!doctype html>
       <h2 class="entry-title">桌面版</h2>
       <p class="entry-lede">不装网易云也能用：读系统正在播放的歌，自动配歌词出卡。Windows 专用。</p>
       <div class="entry-actions">
+        <a class="btn primary" href="https://github.com/yoruuuchan/lyriclens-desktop/releases/latest/download/LyricLens_0.1.0_x64-setup.exe">
+          <span>下载 Windows 安装包</span>
+          <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+          </svg>
+        </a>
         <a class="btn secondary" href="https://github.com/yoruuuchan/lyriclens-desktop" target="_blank" rel="noopener">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.2 1.9 1.2 1.1 1.9 2.9 1.3 3.6 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
           </svg>
-          <span>到 GitHub 看仓库</span>
+          <span>GitHub 仓库</span>
         </a>
       </div>
-      <p class="entry-meta">正式安装包还没发；到仓库看构建说明。</p>
+      <p class="entry-meta">Windows 10/11 · v0.1.0 · AGPL-3.0</p>
+      <p class="entry-preq">首次安装 Windows 可能弹 SmartScreen：点「更多信息 → 仍要运行」即可，个人开源项目未购买代码签名。</p>
     </article>
 
     <article class="entry entry--review">
       <div class="entry-role">复习 · review</div>
       <h2 class="entry-title">手机复习器</h2>
-      <p class="entry-lede">免安装网页 app，导入笔记本躺着刷卡打分，进度流回电脑。</p>
+      <p class="entry-lede">免安装网页 app，配对后一键接收电脑推送的笔记，躺着刷卡打分；卡片可朗读原文。</p>
       <div class="entry-actions">
         <a class="btn primary" href="https://lyriclens-review.yoru-and-akari.dev" target="_blank" rel="noopener">
           <span>打开 Review</span>
@@ -1768,7 +1778,7 @@ const LANDING_HTML = `<!doctype html>
   </section>
 
   <section class="interop" aria-label="三端互通">
-    <p>星标的卡片经 JSON 导出/导入在三端自由流动；复习打分只在手机端发生，导回电脑后进度圆点自动更新。数据全程存在你自己的设备里。</p>
+    <p>桌面和手机配对一次，笔记就能加密接力：电脑推送、手机刷卡打分、进度自动流回，全程端到端加密，云上只停留 10 分钟密文。JSON 导出/导入仍然保留，作为备份和插件侧通道。数据始终在你自己的设备里。</p>
   </section>
 
   <section class="readme">
