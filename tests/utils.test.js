@@ -1,7 +1,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { createHash, randomBytes } = require("node:crypto");
 
-const { injectInlineStyle } = require("../src/utils");
+const { injectInlineStyle, sha256HexSync } = require("../src/utils");
+
+function nodeSha256Hex(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
 
 function createStyleDocument() {
   const nodes = [];
@@ -54,5 +59,31 @@ test("injectInlineStyle creates and updates one style element without a link req
     assert.deepEqual(cssEvents, ["inline-injected", "inline-injected"]);
   } finally {
     globalThis.document = previousDocument;
+  }
+});
+
+test("sha256HexSync matches known answer vectors", () => {
+  assert.equal(
+    sha256HexSync(new Uint8Array()),
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  );
+  assert.equal(
+    sha256HexSync(Buffer.from("abc", "utf8")),
+    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+  );
+  assert.equal(
+    sha256HexSync(Buffer.alloc(1_000_000, "a")),
+    "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
+  );
+});
+
+test("sha256HexSync matches node crypto across block boundaries", () => {
+  for (const length of [0, 1, 63, 64, 65, 4096, 100000]) {
+    const bytes = randomBytes(length);
+    assert.equal(sha256HexSync(bytes), nodeSha256Hex(bytes), `length ${length}`);
+
+    const wrapped = Buffer.concat([Buffer.from([0xff]), bytes, Buffer.from([0xee])]);
+    const view = new Uint8Array(wrapped.buffer, wrapped.byteOffset + 1, bytes.length);
+    assert.equal(sha256HexSync(view), nodeSha256Hex(bytes), `offset view ${length}`);
   }
 });
