@@ -1027,6 +1027,9 @@ const LANDING_HTML = `<!doctype html>
     margin: 0;
     max-width: 620px;
     text-wrap: balance;
+    /* CJK breaks anywhere by default, so balance happily splits 手机复习器
+       mid-word. keep-all restricts break points to punctuation. */
+    word-break: keep-all;
   }
   .nowrap { white-space: nowrap; }
   /* Tight gap between the two lede clauses (one thought, broken at the
