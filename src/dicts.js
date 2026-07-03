@@ -7,8 +7,8 @@
    * jlpt.rs / enexam.rs / cefrj.rs in plain browser JS.
    *
    * Data channel: manifest.json → sources[latest].gzip {url, sha256,
-   * bytes} → fetch raw .json.gz bytes → sha256 verify (crypto.subtle,
-   * skipped with a warning when unavailable) → DecompressionStream
+   * bytes} → fetch raw .json.gz bytes → sha256 verify (crypto.subtle
+   * or sync JS fallback) → DecompressionStream
    * ("gzip") → JSON.parse → in-memory Map.
    *
    * Why gzip and not the canonical .br blob: NCM's embedded Chromium 91
@@ -65,9 +65,11 @@
 
   async function sha256Hex(buffer) {
     const subtle = root.crypto?.subtle || (typeof crypto !== "undefined" ? crypto.subtle : null);
-    if (!subtle?.digest) return null;
-    const hash = await subtle.digest("SHA-256", buffer);
-    return Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, "0")).join("");
+    if (subtle?.digest) {
+      const hash = await subtle.digest("SHA-256", buffer);
+      return Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, "0")).join("");
+    }
+    return root.LyricLens.Utils.sha256HexSync(buffer);
   }
 
   function decompressionStreamCtor() {
@@ -108,9 +110,7 @@
       throw new Error(`blob 长度不符：期望 ${gz.bytes}，实际 ${compressed.byteLength}`);
     }
     const observed = await sha256Hex(compressed);
-    if (observed === null) {
-      console.warn("[LyricLens:dicts]", family, "crypto.subtle 不可用，跳过 sha256 校验");
-    } else if (typeof gz.sha256 === "string" && observed !== gz.sha256) {
+    if (typeof gz.sha256 === "string" && observed !== gz.sha256) {
       throw new Error(`blob sha256 不符：manifest=${gz.sha256} observed=${observed}`);
     }
 

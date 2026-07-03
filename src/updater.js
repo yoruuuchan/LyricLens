@@ -173,16 +173,17 @@
     const digestMatch = expectedDigestRaw.match(/^sha256:([a-f0-9]{64})$/);
     if (digestMatch) {
       const subtle = root.crypto?.subtle || (typeof crypto !== "undefined" ? crypto.subtle : null);
-      if (!subtle?.digest) {
-        return { ok: false, error: "无法校验文件完整性（crypto.subtle 不可用）" };
-      }
       let actualHex;
       try {
         const buf = await blob.arrayBuffer();
-        const hashBuf = await subtle.digest("SHA-256", buf);
-        actualHex = Array.from(new Uint8Array(hashBuf))
-          .map((b) => b.toString(16).padStart(2, "0"))
-          .join("");
+        if (subtle?.digest) {
+          const hashBuf = await subtle.digest("SHA-256", buf);
+          actualHex = Array.from(new Uint8Array(hashBuf))
+            .map((b) => b.toString(16).padStart(2, "0"))
+            .join("");
+        } else {
+          actualHex = root.LyricLens.Utils.sha256HexSync(buf);
+        }
       } catch (err) {
         return { ok: false, error: `SHA-256 计算失败: ${err?.message || err}` };
       }

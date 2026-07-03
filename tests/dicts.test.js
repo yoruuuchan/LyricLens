@@ -64,13 +64,32 @@ function makeFetchMock(byUrl) {
 function freshDicts() {
   const previous = globalThis.LyricLens;
   globalThis.LyricLens = {};
+  delete require.cache[require.resolve("../src/utils")];
   delete require.cache[require.resolve("../src/dicts")];
+  require("../src/utils");
   const Dicts = require("../src/dicts");
   return {
     Dicts,
     restore: () => {
       globalThis.LyricLens = previous;
+      delete require.cache[require.resolve("../src/utils")];
       delete require.cache[require.resolve("../src/dicts")];
+    }
+  };
+}
+
+function defineGlobal(name, value) {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, name);
+  Object.defineProperty(globalThis, name, {
+    value,
+    configurable: true,
+    writable: true
+  });
+  return () => {
+    if (previous) {
+      Object.defineProperty(globalThis, name, previous);
+    } else {
+      delete globalThis[name];
     }
   };
 }
@@ -168,6 +187,24 @@ test("sha256 mismatch fails that family only; store stays empty", async () => {
     assert.equal(Dicts.jlptLookup("挨拶", "あいさつ").length, 1);
   } finally {
     restore();
+  }
+});
+
+test("sha256 fallback verifies gzip blobs when crypto.subtle is unavailable", async () => {
+  const restoreCrypto = defineGlobal("crypto", undefined);
+  const { Dicts, restore } = freshDicts();
+  try {
+    const diag = await Dicts.bootstrapAll({ fetchImpl: standardMock({ cefrj: { corruptSha: true } }) });
+    assert.equal(diag.status.jlpt, "ready");
+    assert.equal(diag.status.enexam, "ready");
+    assert.match(diag.status.cefrj, /^failed:.*sha256 不符/);
+    assert.deepEqual(Dicts.jlptLookup("挨拶", "あいさつ"), [
+      { level: "N3", reading: "あいさつ", source: "bluskyo", confidence: "source" }
+    ]);
+    assert.equal(Dicts.cefrjLookup("above"), null);
+  } finally {
+    restore();
+    restoreCrypto();
   }
 });
 
