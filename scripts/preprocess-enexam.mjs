@@ -7,23 +7,33 @@
 //   JavaProgrammerLB/cet-word-list  word-list.txt — 2016 CET syllabus OCR,
 //                                   CET4/CET6 merged, level markers lost
 //   skywind3000/ECDICT              ecdict.csv — `tag` column (space-
-//                                   separated: zk gk cet4 cet6 ky ...)
-//                                   acts as the leveler for both lists
+//                                   separated: zk gk cet4 cet6 ky ielts toefl …)
+//                                   acts as the leveler for both rosters AND
+//                                   as the sole source for IELTS/TOEFL weak labels
 //   pluto0x0/word3500               3500.txt — gaokao 3500 headwords in
 //                                   3-line groups (word / [IPA] / gloss)
 //
-// Cross-verification rules (see schema doc §双源互证构建规则):
-//   cet4   = clean(cet-word-list) ∩ ECDICT[tag∋cet4]
-//   cet6   = clean(cet-word-list) ∩ ECDICT[tag∋cet6] − cet4
-//   gaokao = clean(word3500 headwords) ∩ ECDICT[tag∋gk]
-//   kaoyan = ECDICT[tag∋ky]           (sole distributable source; the
-//            NETEM syllabus count 5530 is used as a coverage check only —
-//            NETEM data itself is CC BY-NC-SA and never enters the pipeline)
+// Build rules (see schema doc §构建规则):
+//   cet4            = clean(cet-word-list) ∩ ECDICT[tag∋cet4]
+//   cet6            = clean(cet-word-list) ∩ ECDICT[tag∋cet6] − cet4
+//   gaokao          = clean(word3500 headwords) ∩ ECDICT[tag∋gk]
+//   kaoyan          = ECDICT[tag∋ky]        (sole distributable source; NETEM
+//                                            5530 syllabus is a coverage check
+//                                            only — CC BY-NC-SA, never enters)
+//   ielts-community = ECDICT[tag∋ielts]     (single-source community weak label
+//   toefl-community = ECDICT[tag∋toefl]      — no clean IELTS/TOEFL roster
+//                                            exists; see research-ielts-toefl-
+//                                            license.md, single tag namespace
+//                                            makes the "community" suffix load-
+//                                            bearing at UI attribution time)
 //
 // Words present in a roster list but not confirmed by ECDICT are dropped
 // and recorded in dropped.txt with a reason — never silently. Measured
-// baseline (2026-07-02, cet-word-list@8f811cb ECDICT@bc015ed word3500@7af7d31):
-//   gaokao=3655  cet4=3469  cet6=1357  kaoyan≈4800 (86.8% of NETEM 5530)
+// baselines:
+//   2026-07-02 v1.0 (cet-word-list@8f811cb ECDICT@bc015ed word3500@7af7d31):
+//     gaokao=3655  cet4=3469  cet6=1357  kaoyan≈4800 (86.8% of NETEM 5530)
+//   2026-07-03 v1.1 adds IELTS/TOEFL (same ECDICT tree, WORD_RE filter):
+//     ielts-community=5038  toefl-community=6970  (total entries 6734→11041)
 // Scale checks below fail the build if a future rerun drifts out of band.
 //
 // Output layout (scripts/out/enexam/ is gitignored):
@@ -87,19 +97,32 @@ const SOURCES = {
 const NETEM_SYLLABUS_COUNT = 5530;
 const NETEM_MIN_COVERAGE = 0.8;
 
-// Absolute size bands around the measured 2026-07-02 baseline. A rerun
-// that lands outside a band means an upstream reshaped its data — stop
-// and re-verify instead of shipping a silently different vocabulary.
+// Absolute size bands around the measured baselines (2026-07-02 for the
+// four Chinese-exam tags, 2026-07-03 for IELTS/TOEFL). A rerun outside a
+// band means an upstream reshaped its data — stop and re-verify instead
+// of shipping a silently different vocabulary. Community bands are wide
+// (±10% of measured baseline) because ECDICT's IELTS/TOEFL tag lineage
+// is opaque and the schema doc records it as a soft signal.
 const SCALE_CHECKS = {
   gaokao: { min: 3200, max: 4000 },
   cet4: { min: 3000, max: 4500 },
   cet6: { min: 1000, max: 2000 },
   kaoyan: { min: 4300, max: 6100 },
+  "ielts-community": { min: 4500, max: 5500 },
+  "toefl-community": { min: 6500, max: 7500 },
 };
 
-// Fixed tag order inside each entry: basic → advanced. Deterministic
-// output matters — same inputs must produce byte-identical JSON.
-const TAG_ORDER = ["gaokao", "cet4", "cet6", "kaoyan"];
+// Fixed tag order inside each entry: Chinese exams basic → advanced,
+// then community weak labels. Deterministic output matters — same
+// inputs must produce byte-identical JSON.
+const TAG_ORDER = [
+  "gaokao",
+  "cet4",
+  "cet6",
+  "kaoyan",
+  "ielts-community",
+  "toefl-community",
+];
 
 function parseArgs() {
   const args = { dryRun: false, localDir: null, generatedAt: null, refresh: false };
@@ -197,7 +220,16 @@ function csvFields(line) {
 // per-exam-tag word sets plus the full word set (to distinguish "ECDICT
 // doesn't know this word" from "knows it but didn't tag it" in dropped.txt).
 async function parseEcdict(csvPath) {
-  const tagSets = { gk: new Set(), cet4: new Set(), cet6: new Set(), ky: new Set() };
+  const tagSets = {
+    gk: new Set(),
+    cet4: new Set(),
+    cet6: new Set(),
+    ky: new Set(),
+    // ECDICT's native tag names for IELTS/TOEFL — these become the
+    // ielts-community / toefl-community output tags in crossVerify.
+    ielts: new Set(),
+    toefl: new Set(),
+  };
   const allWords = new Set();
   let rows = 0;
   const rl = createInterface({ input: createReadStream(csvPath), crlfDelay: Infinity });
@@ -231,6 +263,13 @@ function crossVerify({ cetAll, gaokaoRoster, ecdict }) {
   const cet6 = subtract(intersect(cetAll, tagSets.cet6), cet4);
   const gaokao = intersect(gaokaoRoster, tagSets.gk);
   const kaoyan = tagSets.ky;
+  // IELTS/TOEFL are single-source community weak labels — no clean
+  // roster exists to intersect against (see docs/roadmap/research-
+  // ielts-toefl-license.md §候选源盘点). The output tag names carry
+  // the "-community" suffix so the UI can visually differentiate them
+  // from the twice-verified Chinese-exam tags.
+  const ieltsCommunity = tagSets.ielts;
+  const toeflCommunity = tagSets.toefl;
 
   const dropped = [];
   for (const w of [...subtract(subtract(cetAll, cet4), cet6)].sort()) {
@@ -243,7 +282,17 @@ function crossVerify({ cetAll, gaokaoRoster, ecdict }) {
       : "gaokao-roster: not in ECDICT (likely OCR noise)";
     dropped.push({ word: w, reason });
   }
-  return { sets: { gaokao, cet4, cet6, kaoyan }, dropped };
+  return {
+    sets: {
+      gaokao,
+      cet4,
+      cet6,
+      kaoyan,
+      "ielts-community": ieltsCommunity,
+      "toefl-community": toeflCommunity,
+    },
+    dropped,
+  };
 }
 
 function runScaleChecks(sets) {
@@ -280,7 +329,7 @@ function buildEnvelope({ entries, shas, generatedAt }) {
   return {
     schema: SCHEMA_VERSION,
     generated_at: generatedAt,
-    license: "MIT sources, cross-verified; headwords + tags only",
+    license: "MIT sources; headwords + tags only (four Chinese-exam tags cross-verified, IELTS/TOEFL single-source community weak labels from ECDICT)",
     sources: {
       "cet-word-list": shas["cet-word-list"],
       ECDICT: shas.ECDICT,
@@ -300,7 +349,7 @@ function buildManifest({ buildKey, blobName, sha256Hex, byteLen, gz, shas, gener
       [buildKey]: {
         url: `${BLOB_URL_BASE}/${blobName}`,
         encoding: "br",
-        license: "MIT sources, cross-verified; headwords + tags only",
+        license: "MIT sources; headwords + tags only (four Chinese-exam tags cross-verified, IELTS/TOEFL single-source community weak labels from ECDICT)",
         source: `cet-word-list@${shas["cet-word-list"]} + ECDICT@${shas.ECDICT} + word3500@${shas.word3500}`,
         sha256: sha256Hex,
         bytes: byteLen,
@@ -363,10 +412,20 @@ async function main() {
   console.log(`gaokao roster: ${gaokaoRoster.size} unique headwords`);
 
   const ecdict = await parseEcdict(ecdictPath);
-  console.log(`ecdict: ${ecdict.rows} rows; tags gk=${ecdict.tagSets.gk.size} cet4=${ecdict.tagSets.cet4.size} cet6=${ecdict.tagSets.cet6.size} ky=${ecdict.tagSets.ky.size}`);
+  console.log(
+    `ecdict: ${ecdict.rows} rows; tags gk=${ecdict.tagSets.gk.size} ` +
+      `cet4=${ecdict.tagSets.cet4.size} cet6=${ecdict.tagSets.cet6.size} ` +
+      `ky=${ecdict.tagSets.ky.size} ielts=${ecdict.tagSets.ielts.size} ` +
+      `toefl=${ecdict.tagSets.toefl.size}`
+  );
 
   const { sets, dropped } = crossVerify({ cetAll, gaokaoRoster, ecdict });
-  console.log(`cross-verified: gaokao=${sets.gaokao.size} cet4=${sets.cet4.size} cet6=${sets.cet6.size} kaoyan=${sets.kaoyan.size}`);
+  console.log(
+    `cross-verified: gaokao=${sets.gaokao.size} cet4=${sets.cet4.size} ` +
+      `cet6=${sets.cet6.size} kaoyan=${sets.kaoyan.size} ` +
+      `ielts-community=${sets["ielts-community"].size} ` +
+      `toefl-community=${sets["toefl-community"].size}`
+  );
   console.log(`dropped: ${dropped.length} roster words (see dropped.txt)`);
 
   const { failures, coverage } = runScaleChecks(sets);

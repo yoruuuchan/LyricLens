@@ -1,6 +1,6 @@
 # IELTS / TOEFL community 词表 license 调研
 
-Status: research only, 2026-07-03. 本文只给数据源判断和产品建议，不落代码。
+Status: research → adopted 2026-07-03. 结论落地为管道 v1.1（`ielts-community` / `toefl-community` tags 从 ECDICT 单源提取）+ 双 host 淡一档 badge UI；schema doc `en-exam-vocab.md` §构建规则 已 additive 收纳。本文保留作决策档案，不作产品需求文档。
 
 ## 结论
 
@@ -59,7 +59,7 @@ TOEFL iBT Reading 官方页面说 Reading 任务测量的是在语境中理解 m
 - AWL 与 IELTS/TOEFL 的关系是“学术英语常见”，不是考试主办方或社区的考试标签。
 - 如果未来要做，应该是独立 `academic-awl` 或 `academic-vocab` family，文案不要挂 IELTS/TOEFL。
 
-## 推荐集成方案（待拍板）
+## 集成方案（2026-07-03 已实施 v1.1）
 
 如果要做：
 
@@ -105,9 +105,9 @@ TOEFL 必考词
 官方授权
 ```
 
-## 最终建议
+## 最终建议（已采纳并实施，2026-07-03）
 
-默认继续不做 IELTS/TOEFL，除非 Yoru 明确想要“弱标签”。如果要做，选 ECDICT 单源弱标签，不再寻找第二源硬互证；第二源目前不是 license 问题，而是没有干净数据。这个功能应当低优先级、小字免责声明、默认 off，与现有高考/CET/考研标签区隔。
+选 ECDICT 单源弱标签（tags `ielts-community` / `toefl-community`），不再寻找第二源硬互证；第二源目前不是 license 问题，而是没有干净数据。功能默认 off；UI 视觉「淡一档 pill + tooltip 社区参考·非官方」与现有高考/CET/考研标签视觉区隔（Yoru 2026-07-03 拍板视觉区隔）。
 
 ## Sources
 
