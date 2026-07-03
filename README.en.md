@@ -2,18 +2,21 @@
 
 [中文](README.md) · [English](README.en.md)
 
-An AI-powered lyric-learning overlay. While a song is playing, LyricLens reads the current lyrics, asks a user-configured OpenAI-compatible Chat Completions endpoint to generate a learning card, and renders it inline with the lyric scroll.
+Listen to a song, turn its lyrics into language-learning cards as you go. NetEase Cloud Music plugin, standalone desktop app, and a mobile review PWA — three entries, one notebook. This repo is one of them: the BetterNCM plugin that runs inside NCM, reads the current lyrics, calls the OpenAI-compatible Chat Completions endpoint you configured, and renders the resulting learning card inline with the lyric scroll.
 
-## Two hosts, one product
+## Three hosts, one product
 
-LyricLens is one product with two independent hosts. This repo is host 1 (the BetterNCM plugin):
+LyricLens is one product with three independent hosts (v1.0). This repo is host 1 (the BetterNCM plugin):
 
-| Host | Repository | Where it lives | Now-playing source | Lyric source |
-|---|---|---|---|---|
-| **Plugin** | this repo | NetEase Cloud Music client + BetterNCM | NCM internals | NCM memory |
-| **Desktop** | [`lyriclens-desktop`](https://github.com/yoruuuchan/lyriclens-desktop) | standalone Windows app | SMTC (any supported player) | LRCLIB |
+| Host | Repository | Where it lives | Role |
+|---|---|---|---|
+| **Plugin (capture)** | this repo | NetEase Cloud Music client + BetterNCM | reads NCM lyrics live, generates LLM learning cards, star-to-save |
+| **Desktop (capture)** | [`lyriclens-desktop`](https://github.com/yoruuuchan/lyriclens-desktop) | standalone Windows app | runs on SMTC + LRCLIB, no BetterNCM dependency |
+| **Review PWA** | [`lyriclens-review`](https://github.com/yoruuuchan/lyriclens-review) · [launch](https://lyriclens-review.yoru-and-akari.dev) | mobile browser (installable to home screen) | rate + revise saved notebook entries on the phone, Anki export |
 
-Both hosts are complete, independent products. **If BetterNCM ever stops being maintained, the desktop host keeps the product alive.** The two share schema via JSON import/export — no live sync.
+All three hosts are complete, independent products. **If either capture host stops being maintained, the other keeps the product alive; the Review PWA carries learning progress off the desktop into pocket-friendly review.** They share schema via `NotebookEntry` JSON import/export — no live sync.
+
+Learning cards optionally overlay reference-dictionary badges: JLPT (N5–N1), CEFR-J (A1–C2), Chinese English-exam syllabi (Gaokao / CET-4 / CET-6 / Kaoyan) + IELTS / TOEFL community weak labels (v1.1 renders these one shade softer to signal "not official"). The dictionary CDN is deployed independently of any host.
 
 ## Screenshots
 

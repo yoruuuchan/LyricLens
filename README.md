@@ -2,18 +2,21 @@
 
 [中文](README.md) · [English](README.en.md)
 
-AI 歌词学习浮层。播放歌曲时读取当前歌词，调用用户配置的 OpenAI 兼容 Chat Completions Endpoint 生成学习卡片，跟着歌词滚动显示。
+边听歌，边把歌词变成语言学习卡片。网易云插件、独立桌面版、手机复习器——三个入口，一本笔记本。本仓库是入口之一：BetterNCM 插件，跑在网易云里，读当前歌词、调用你配置的 OpenAI 兼容 Chat Completions endpoint 出学习卡片，跟着歌词滚动显示。
 
-## 两个 host，一个产品
+## 三个 host，一个产品
 
-LyricLens 是「一个产品，两个 host」，本仓库是 host 1（BetterNCM 插件）：
+LyricLens 是「一个产品，三个 host」（v1.0），本仓库是 host 1（BetterNCM 插件）：
 
-| Host | 仓库 | 装在哪 | 取播放信息 | 取歌词 |
-|---|---|---|---|---|
-| **插件版** | 你正在看的这个 | 网易云客户端 + BetterNCM | NCM 内部对象 | NCM 内存 |
-| **桌面版** | [`lyriclens-desktop`](https://github.com/yoruuuchan/lyriclens-desktop) | 独立 Windows 应用 | SMTC（任意支持的播放器） | LRCLIB |
+| Host | 仓库 | 装在哪 | 干什么 |
+|---|---|---|---|
+| **插件（采集）** | 你正在看的这个 | 网易云客户端 + BetterNCM | 播歌时读词、调 LLM 出学习卡片、加星收藏 |
+| **桌面（采集）** | [`lyriclens-desktop`](https://github.com/yoruuuchan/lyriclens-desktop) | 独立 Windows 应用 | 靠 SMTC + LRCLIB 独立运转，不依赖 BetterNCM |
+| **Review PWA（复习）** | [`lyriclens-review`](https://github.com/yoruuuchan/lyriclens-review) · [直达](https://lyriclens-review.yoru-and-akari.dev) | 手机浏览器（可装桌面图标） | 把加过星的条目挪到手机上评级复习、Anki 导出 |
 
-两个 host 都是独立完整产品，**互不依赖**——BetterNCM 哪天停更，桌面版独立运转不受影响。两边通过 JSON 导入/导出打通数据（不做实时同步）。
+三个 host 都是独立完整产品，**互不依赖**——两个采集侧任一停更另一个独立运转，Review 侧把学习进度装回口袋。三者通过 `NotebookEntry` JSON 导入/导出打通数据，不做实时同步。
+
+学习卡片默认叠加参考词典弱标签：JLPT（N5–N1）、CEFR-J（A1–C2）、中文外语考试大纲（高考 / CET-4 / CET-6 / 考研）+ IELTS / TOEFL 社区参考弱标签（v1.1 一档色调更淡，明示非官方）。参考词典 CDN 与 host 完全独立。
 
 ## 截图
 

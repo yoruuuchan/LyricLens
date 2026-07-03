@@ -89,8 +89,14 @@ function downloadRedirect() {
 // First request after a release hydrates R2; subsequent requests are pure
 // R2 reads. Any breakage (no version, R2 down, upstream 5xx) silently
 // falls back to the legacy 302, so users always get *some* download.
+//
+// Reads version + asset_url from getLatestPayloadSnapshot so we never
+// disagree with /latest.json about which release we're currently
+// pointing at — see the snapshot function's block comment for the
+// 2026-07-03 incident that motivated the change.
 async function downloadResponse(env, ctx) {
-  const latest = await fetchLatestPayloadSafe();
+  const snapshot = await getLatestPayloadSnapshot(ctx);
+  const latest = snapshot.ok ? snapshot.body : null;
   if (!latest?.github_asset_url || !latest?.version) {
     return downloadRedirect();
   }
@@ -101,7 +107,7 @@ async function downloadResponse(env, ctx) {
       r2Key: `releases/${latest.version}/${ASSET_NAME}`,
       upstreamUrl: latest.github_asset_url,
       contentType: "application/octet-stream",
-      immutable: true,
+      cachePolicy: "no-store",
       disposition: `attachment; filename="${ASSET_NAME}"`,
     });
   } catch (err) {
@@ -112,39 +118,29 @@ async function downloadResponse(env, ctx) {
 
 // Bump CACHE_REV after a release to invalidate edge cache without waiting
 // out CACHE_TTL_SECONDS. cache.default keys on the full Request URL.
-const CACHE_REV = "v8";
+//
+// v9 (2026-07-03): every /latest.json, /download, /changelog and /
+// version chip now reads from a single shared snapshot cached under
+// this rev — bumping the rev cleared the last stragglers of the
+// pre-fix independent per-route cache entries.
+const CACHE_REV = "v9";
 
 async function latestJsonResponse(ctx) {
-  const cache = caches.default;
-  const cacheKey = new Request(`https://cache.lyriclens/latest.json?rev=${CACHE_REV}`);
-  const cached = await cache.match(cacheKey);
-  if (cached) return cached;
-
-  const payload = await fetchLatestPayload();
-  const status = payload.ok ? 200 : 502;
-  const resp = new Response(JSON.stringify(payload.body, null, 2), {
+  const snapshot = await getLatestPayloadSnapshot(ctx);
+  const status = snapshot.ok ? 200 : 502;
+  return new Response(JSON.stringify(snapshot.body, null, 2), {
     status,
-    headers: jsonHeaders(payload.ok ? CACHE_TTL_SECONDS : 30),
+    headers: jsonHeaders(snapshot.ok ? CACHE_TTL_SECONDS : 30),
   });
-  // Only cache successful responses to avoid pinning a 502 for 10 min.
-  if (payload.ok) ctx.waitUntil(cache.put(cacheKey, resp.clone()));
-  return resp;
 }
 
 async function changelogResponse(ctx) {
-  const cache = caches.default;
-  const cacheKey = new Request(`https://cache.lyriclens/changelog?rev=${CACHE_REV}`);
-  const cached = await cache.match(cacheKey);
-  if (cached) return cached;
-
-  const payload = await fetchLatestPayload();
-  if (!payload.ok) {
+  const snapshot = await getLatestPayloadSnapshot(ctx);
+  if (!snapshot.ok) {
     return new Response("upstream lookup failed", { status: 502, headers: textHeaders(30) });
   }
-  const body = payload.body.changelog || "(no changelog)";
-  const resp = new Response(body, { status: 200, headers: textHeaders(CACHE_TTL_SECONDS) });
-  ctx.waitUntil(cache.put(cacheKey, resp.clone()));
-  return resp;
+  const body = snapshot.body.changelog || "(no changelog)";
+  return new Response(body, { status: 200, headers: textHeaders(CACHE_TTL_SECONDS) });
 }
 
 async function fetchLatestPayload() {
@@ -198,12 +194,14 @@ async function fetchLatestPayload() {
 }
 
 async function landingResponse(ctx) {
-  // Fan-out: README + latest release in parallel. Both have their own
-  // edge-cache layers so most requests skip the upstream hop entirely.
-  const [readme, latest] = await Promise.all([
+  // Fan-out: README + latest release snapshot in parallel. Both have
+  // their own edge-cache layers so most requests skip the upstream hop
+  // entirely.
+  const [readme, snapshot] = await Promise.all([
     fetchReadmeParts(ctx),
-    fetchLatestPayloadSafe(),
+    getLatestPayloadSnapshot(ctx),
   ]);
+  const latest = snapshot.ok ? snapshot.body : null;
 
   const versionTag = latest?.version ? `v${latest.version}` : "";
   const versionMeta = latest?.published_at
@@ -219,15 +217,43 @@ async function landingResponse(ctx) {
   return new Response(body, { status: 200, headers: htmlHeaders(60) });
 }
 
-// Wraps fetchLatestPayload so a failed GitHub call doesn't blow up the
-// landing render — we just skip the version chip in that case.
-async function fetchLatestPayloadSafe() {
-  try {
-    const payload = await fetchLatestPayload();
-    return payload.ok ? payload.body : null;
-  } catch (_) {
-    return null;
+// Single-writer / multi-reader cache for the latest-release payload.
+// All routes that need the current version, asset_url, changelog, or
+// digest MUST go through this — never call fetchLatestPayload directly
+// from a route handler. This is what makes /latest.json, /download,
+// /changelog, and the landing version chip return byte-consistent
+// release data within one CACHE_TTL_SECONDS window.
+//
+// Motivation (2026-07-03 v1.0.0 release incident): the old design had
+// /latest.json cached in caches.default while /download went through
+// its own CF sub-request cache when calling fetchLatestPayload. The
+// two caches expired independently, so during a ~10-min window after
+// a release /latest.json returned the new version while /download
+// still handed out the previous asset. Downloads then failed SHA-256
+// verification on the client. Reading everything from the same
+// snapshot forbids that skew — either every route sees the new
+// payload or every route still sees the old one, no half-updated
+// state.
+async function getLatestPayloadSnapshot(ctx) {
+  const cache = caches.default;
+  const cacheKey = new Request(`https://cache.lyriclens/snapshot?rev=${CACHE_REV}`);
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    try {
+      return { ok: true, body: await cached.json() };
+    } catch (_) {
+      // Corrupt snapshot — fall through and refetch.
+    }
   }
+  const payload = await fetchLatestPayload();
+  if (payload.ok) {
+    const snapshot = new Response(JSON.stringify(payload.body), {
+      status: 200,
+      headers: jsonHeaders(CACHE_TTL_SECONDS),
+    });
+    ctx.waitUntil(cache.put(cacheKey, snapshot.clone()));
+  }
+  return payload;
 }
 
 function formatPubDate(iso) {
@@ -279,6 +305,15 @@ async function fetchReadmeParts(ctx) {
   );
   html = html.replace(
     /<div class="markdown-heading"[^>]*>\s*<h1[^>]*>[\s\S]*?LyricLens[\s\S]*?<\/h1>[\s\S]*?<\/div>/i,
+    ""
+  );
+
+  // Drop the "截图 / Screenshots" heading — landing renders the
+  // screenshot images up top in the hero-screens strip, so leaving
+  // this h2 behind (after the <p align="center"> body gets extracted
+  // below) would surface an orphan heading in the readme article.
+  html = html.replace(
+    /<div class="markdown-heading"[^>]*>\s*<h2[^>]*>[\s\S]*?(?:截图|Screenshots)[\s\S]*?<\/h2>[\s\S]*?<\/div>/i,
     ""
   );
 
@@ -561,7 +596,7 @@ async function fontProxyResponse(filename, env, ctx) {
       r2Key: `fonts/${filename}`,
       upstreamUrl: upstream,
       contentType: "font/woff2",
-      immutable: true,
+      cachePolicy: "immutable",
     });
   } catch (err) {
     try { console.warn(`[LyricLens] font proxy failed for ${filename}:`, err?.message || err); } catch (_) {}
@@ -574,7 +609,22 @@ async function fontProxyResponse(filename, env, ctx) {
 // the caller can decide how to fall back. R2 misuse (binding missing,
 // get/put errors) degrades to a one-shot upstream fetch instead of
 // failing the whole request — the landing page still loads.
-async function assetProxy({ env, ctx, r2Key, upstreamUrl, contentType, immutable, disposition }) {
+//
+// cachePolicy — one of "immutable" | "no-store". Selects both the
+// downstream response's Cache-Control header AND the CF sub-request
+// cache behavior for the upstream fetch:
+//
+//   "immutable" — fonts. Keyed by filename, content byte-identical
+//     across releases → safe to sit forever in any HTTP disk cache.
+//     Edge caches upstream for cacheTtl to skip jsdelivr hops.
+//
+//   "no-store"  — release binaries served under an unversioned URL
+//     like /download. MUST NOT enter any HTTP disk cache — a poisoned
+//     entry keeps replaying past releases with zero network fetch
+//     (verified against NCM's embedded Chromium on 2026-07-03). No
+//     downstream cache, no CF sub-request cache; R2 hit is fine (that
+//     layer is per-version keyed and refreshed on every deploy).
+async function assetProxy({ env, ctx, r2Key, upstreamUrl, contentType, cachePolicy, disposition }) {
   const bucket = env?.R2_ASSETS;
   if (bucket) {
     try {
@@ -582,7 +632,7 @@ async function assetProxy({ env, ctx, r2Key, upstreamUrl, contentType, immutable
       if (cached) {
         return new Response(cached.body, {
           status: 200,
-          headers: assetHeaders(contentType, immutable, disposition),
+          headers: assetHeaders(contentType, cachePolicy, disposition),
         });
       }
     } catch (err) {
@@ -592,9 +642,17 @@ async function assetProxy({ env, ctx, r2Key, upstreamUrl, contentType, immutable
     try { console.warn(`[LyricLens] R2_ASSETS not bound; serving ${r2Key} direct from upstream`); } catch (_) {}
   }
 
+  // Fonts benefit from an edge cache tier on top of R2 — they're
+  // byte-identical across versions. Release binaries must skip it:
+  // R2 is already the "hot cache" and an edge tier on an unversioned
+  // URL would keep replaying the previous release for cacheTtl
+  // seconds after we ship a new one.
+  const edgeCache = cachePolicy === "no-store"
+    ? { cacheEverything: false }
+    : { cacheTtl: 3600, cacheEverything: true };
   const upstream = await fetch(upstreamUrl, {
     headers: { "User-Agent": USER_AGENT, "Accept": "*/*" },
-    cf: { cacheTtl: 3600, cacheEverything: true },
+    cf: edgeCache,
     redirect: "follow",
   });
   if (!upstream.ok) {
@@ -611,16 +669,27 @@ async function assetProxy({ env, ctx, r2Key, upstreamUrl, contentType, immutable
   }
   return new Response(buf, {
     status: 200,
-    headers: assetHeaders(contentType, immutable, disposition),
+    headers: assetHeaders(contentType, cachePolicy, disposition),
   });
 }
 
-function assetHeaders(contentType, immutable, disposition) {
+function assetHeaders(contentType, cachePolicy, disposition) {
+  let cacheControl;
+  if (cachePolicy === "immutable") {
+    cacheControl = "public, max-age=31536000, immutable";
+  } else if (cachePolicy === "no-store") {
+    // See assetProxy's block comment. NCM's embedded Chromium honored
+    // the old `immutable` for a year without ever hitting the network
+    // again, poisoning the /download URL past the release window.
+    // `no-store` is the only Cache-Control that reliably forbids
+    // every intermediate cache from persisting the response.
+    cacheControl = "no-store";
+  } else {
+    cacheControl = "public, max-age=86400";
+  }
   const headers = {
     "content-type": contentType,
-    "cache-control": immutable
-      ? "public, max-age=31536000, immutable"
-      : "public, max-age=86400",
+    "cache-control": cacheControl,
     // Fonts and other cross-origin sub-resources need this when the consumer
     // sets crossorigin on the <link> / @font-face request.
     "access-control-allow-origin": "*",
@@ -1408,12 +1477,163 @@ const LANDING_HTML = `<!doctype html>
   .readme-content .anchor,
   .readme-content .octicon { display: none; }
 
+  /* Three entry cards — this is the product story. Plugin / desktop /
+     review sit as sibling articles, plugin carries the primary
+     /download CTA. Desktop three across; stacks on mobile. */
+  .entries {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    margin-top: 64px;
+    align-items: stretch;
+  }
+  .entry {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-surface);
+    border-radius: var(--radius-xl);
+    padding: 26px 24px 22px;
+    box-shadow: var(--shadow-raised);
+    transition: box-shadow var(--dur-base) var(--ease-out),
+                transform var(--dur-base) var(--ease-out);
+  }
+  .entry:hover { box-shadow: var(--shadow-lifted); transform: translateY(-2px); }
+  .entry-role {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin-bottom: 10px;
+  }
+  .entry-title {
+    font-family: var(--font-ui);
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--ink-1);
+    margin: 0 0 10px;
+  }
+  .entry-lede {
+    font-size: 14.5px;
+    line-height: 1.6;
+    color: var(--ink-2);
+    margin: 0 0 20px;
+  }
+  .entry-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .entry-actions .btn {
+    height: 42px;
+    padding: 0 18px;
+    font-size: 14px;
+  }
+  .entry-meta {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink-3);
+    letter-spacing: 0.04em;
+    margin: 0 0 6px;
+  }
+  .entry-meta:empty { display: none; }
+  .entry-preq {
+    font-size: 12.5px;
+    color: var(--ink-3);
+    line-height: 1.55;
+    margin: 4px 0 0;
+  }
+  .entry-preq a {
+    color: var(--primary-500);
+    border-bottom: 1px solid var(--primary-300);
+    padding-bottom: 1px;
+  }
+  .entry-preq a:hover { color: var(--primary-600); }
+  .entry-install {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line-1);
+  }
+  .entry-install > summary {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-2);
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    user-select: none;
+  }
+  .entry-install > summary::-webkit-details-marker { display: none; }
+  .entry-install > summary::after {
+    content: "+";
+    margin-left: auto;
+    font-family: var(--font-mono);
+    color: var(--ink-3);
+    transition: transform var(--dur-base) var(--ease-out);
+  }
+  .entry-install[open] > summary::after { transform: rotate(45deg); }
+  .entry-install ol {
+    margin: 14px 0 10px;
+    padding-left: 20px;
+    font-size: 13px;
+    color: var(--ink-2);
+    line-height: 1.6;
+  }
+  .entry-install li { margin-bottom: 4px; }
+  .entry-install p {
+    font-size: 12.5px;
+    color: var(--ink-3);
+    line-height: 1.55;
+    margin: 8px 0 0;
+  }
+  .entry-install code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--bg-sunken);
+    color: var(--ink-2);
+    padding: 1px 6px;
+    border-radius: 5px;
+    box-shadow: var(--shadow-inset);
+  }
+  .entry-install a {
+    color: var(--primary-500);
+    border-bottom: 1px solid var(--primary-300);
+    padding-bottom: 1px;
+  }
+  .entry-install a:hover { color: var(--primary-600); }
+
+  /* Interop line — small reassurance block below the three cards.
+     "数据全程存在你自己的设备里" is a privacy stance, not a marketing
+     bullet, so it reads as inline prose not a highlighted callout. */
+  .interop {
+    margin-top: 32px;
+    padding: 20px 24px;
+    background: var(--bg-tint);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-inset);
+  }
+  .interop p {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.65;
+    color: var(--ink-2);
+  }
+
   /* Responsive — design-system mobile-first sizing */
   @media (max-width: 900px) {
     main { padding: 56px 24px 72px; }
     .hero h1 { font-size: 56px; }
     .hero h1 .jp { font-size: 0.5em; margin-left: 12px; }
     .hero .lede { font-size: 18px; }
+    .entries { grid-template-columns: 1fr; gap: 16px; margin-top: 48px; }
+    .entry { padding: 22px 20px 18px; }
+    .entry-title { font-size: 20px; }
+    .interop { margin-top: 24px; padding: 18px 20px; }
     .readme { margin-top: 72px; }
     .readme-content { font-size: 16px; }
     .readme-content h2 { font-size: 32px; margin: 80px 0 18px; }
@@ -1426,6 +1646,10 @@ const LANDING_HTML = `<!doctype html>
     .hero h1 .jp { display: block; margin-left: 0; margin-top: 8px; font-size: 18px; }
     .hero .lede { font-size: 16px; }
     .btn { height: 44px; font-size: 14px; }
+    .entry-actions .btn { height: 40px; }
+    .entry-title { font-size: 19px; }
+    .entry-lede { font-size: 14px; }
+    .interop p { font-size: 13.5px; }
     .row { padding: 14px 16px; }
     .theme-toggle { top: 16px; right: 16px; width: 38px; height: 38px; }
     .readme { margin-top: 56px; }
@@ -1469,30 +1693,10 @@ const LANDING_HTML = `<!doctype html>
 
 <main>
   <section class="hero">
-    <div class="eyebrow"><span class="dot"></span>plugin · betterncm</div>
+    <div class="eyebrow"><span class="dot"></span>one product · three entries</div>
     <h1>lyriclens<span class="jp" lang="ja">歌詞のレンズ</span></h1>
-    <p class="lede">把网易云每一句正在播放的歌词，变成一张外语学习卡片。</p>
-    <p class="lede">词汇、语法、文化注释，跟着旋律一起停留。</p>
-
-    <div class="actions">
-      <a class="btn primary" href="/download">
-        <span>下载最新版 <span class="btn-version"><!--VERSION_TAG--></span></span>
-        <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="5" y1="12" x2="19" y2="12"></line>
-          <polyline points="12 5 19 12 12 19"></polyline>
-        </svg>
-      </a>
-      <a class="btn secondary" href="https://github.com/yoruuuchan/LyricLens" target="_blank" rel="noopener">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-          <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.2 1.9 1.2 1.1 1.9 2.9 1.3 3.6 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
-        </svg>
-        <span>github</span>
-      </a>
-    </div>
-
-    <p class="release-meta"><!--VERSION_META--></p>
-
-    <p class="preqs">前置：需要先装 <a href="https://github.com/MicroCBer/BetterNCM" target="_blank" rel="noopener">BetterNCM</a>，再装本插件。</p>
+    <p class="lede">边听歌，边把歌词变成语言学习卡片。</p>
+    <p class="lede">网易云插件、独立桌面版、手机复习器——三个入口，一本笔记本。</p>
 
     <div class="status-pill" role="status" aria-label="服务运行中">
       <span class="dot" aria-hidden="true"></span>
@@ -1503,6 +1707,70 @@ const LANDING_HTML = `<!doctype html>
 
   <section class="hero-screens" aria-label="插件截图"><!--HERO_SCREENS--></section>
 
+  <section class="entries" aria-label="三个入口">
+    <article class="entry entry--plugin">
+      <div class="entry-role">采集 · plugin</div>
+      <h2 class="entry-title">网易云插件</h2>
+      <p class="entry-lede">在 NCM 里听歌实时出卡、查词库标签、星标收藏。</p>
+      <div class="entry-actions">
+        <a class="btn primary" href="/download">
+          <span>下载最新版 <span class="btn-version"><!--VERSION_TAG--></span></span>
+          <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+          </svg>
+        </a>
+      </div>
+      <p class="entry-meta"><!--VERSION_META--></p>
+      <p class="entry-preq">前置：需要先装 <a href="https://github.com/MicroCBer/BetterNCM" target="_blank" rel="noopener">BetterNCM</a>。</p>
+      <details class="entry-install">
+        <summary>安装步骤</summary>
+        <ol>
+          <li>退出网易云音乐。</li>
+          <li>点上方按钮下载 <code>LyricLens.plugin</code>。</li>
+          <li>把文件拖进 BetterNCM 的「插件管理」窗口。</li>
+          <li>重开网易云，在 BetterNCM 里启用 LyricLens。</li>
+        </ol>
+        <p>已经装过？浮层齿轮 → 关于 → 立即更新。备选：<a href="https://github.com/yoruuuchan/LyricLens/releases" target="_blank" rel="noopener">GitHub Releases</a>。</p>
+      </details>
+    </article>
+
+    <article class="entry entry--desktop">
+      <div class="entry-role">采集 · desktop</div>
+      <h2 class="entry-title">桌面版</h2>
+      <p class="entry-lede">不装网易云也能用：读系统正在播放的歌，自动配歌词出卡。Windows 专用。</p>
+      <div class="entry-actions">
+        <a class="btn secondary" href="https://github.com/yoruuuchan/lyriclens-desktop" target="_blank" rel="noopener">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.2 1.9 1.2 1.1 1.9 2.9 1.3 3.6 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+          </svg>
+          <span>到 GitHub 看仓库</span>
+        </a>
+      </div>
+      <p class="entry-meta">正式安装包还没发；到仓库看构建说明。</p>
+    </article>
+
+    <article class="entry entry--review">
+      <div class="entry-role">复习 · review</div>
+      <h2 class="entry-title">手机复习器</h2>
+      <p class="entry-lede">免安装网页 app，导入笔记本躺着刷卡打分，进度流回电脑。</p>
+      <div class="entry-actions">
+        <a class="btn primary" href="https://lyriclens-review.yoru-and-akari.dev" target="_blank" rel="noopener">
+          <span>打开 Review</span>
+          <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+          </svg>
+        </a>
+      </div>
+      <p class="entry-preq">浏览器菜单 → 添加到主屏幕，桌面图标秒开。</p>
+    </article>
+  </section>
+
+  <section class="interop" aria-label="三端互通">
+    <p>星标的卡片经 JSON 导出/导入在三端自由流动；复习打分只在手机端发生，导回电脑后进度圆点自动更新。数据全程存在你自己的设备里。</p>
+  </section>
+
   <section class="readme">
     <article class="readme-content"><!--README_HTML--></article>
   </section>
@@ -1510,7 +1778,7 @@ const LANDING_HTML = `<!doctype html>
   <details class="endpoints-section">
     <summary class="section-title">endpoints <span class="jp" lang="ja">· 開発者向け</span></summary>
     <div class="endpoints">
-      <div class="ep"><span class="verb">get</span><span class="path">/download</span><span class="note">302 → github release</span></div>
+      <div class="ep"><span class="verb">get</span><span class="path">/download</span><span class="note">release binary · r2 proxy · no-store</span></div>
       <div class="ep"><span class="verb">get</span><span class="path">/latest.json</span><span class="note">version · changelog · size · digest</span></div>
       <div class="ep"><span class="verb">get</span><span class="path">/changelog</span><span class="note">text · markdown</span></div>
       <div class="ep"><span class="verb">get</span><span class="path">/healthz</span><span class="note">ok</span></div>

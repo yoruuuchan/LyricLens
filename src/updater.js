@@ -127,7 +127,15 @@
       const resp = await fetchWithTimeout(DOWNLOAD_URL, {
         // BetterNCM fetch defaults to follow; explicit for clarity since
         // the URL chain is /download → github.com → objects.githubusercontent
-        redirect: "follow"
+        redirect: "follow",
+        // Defense-in-depth against the 2026-07-03 poison-cache incident.
+        // The Worker now returns Cache-Control: no-store for /download,
+        // but NCM's embedded Chromium had already accumulated a year of
+        // immutable disk-cache entries pointing at previous releases;
+        // those keep replaying without a network request until the
+        // client asks for a fresh copy explicitly. Force a network fetch
+        // here so old-cached clients recover cleanly on their next update.
+        cache: "no-store"
       }, DOWNLOAD_TIMEOUT_MS);
       if (!resp.ok) {
         return { ok: false, error: `下载失败 HTTP ${resp.status}` };
