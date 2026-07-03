@@ -2,7 +2,7 @@
 
 [中文](README.md) · [English](README.en.md)
 
-AI 歌词学习浮层。播放歌曲时读取当前歌词，调用用户配置的 OpenAI 兼容 Chat Completions Endpoint 生成学习卡片，跟着歌词滚动显示。
+边听歌，边把歌词变成语言学习卡片。网易云插件、独立桌面版、手机复习器——三个入口，一本笔记本。本仓库是入口之一：BetterNCM 插件，跑在网易云里，读当前歌词、调用你配置的 OpenAI 兼容 Chat Completions endpoint 出学习卡片，跟着歌词滚动显示。
 
 ## 三个 host，一个产品
 

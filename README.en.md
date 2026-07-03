@@ -2,7 +2,7 @@
 
 [中文](README.md) · [English](README.en.md)
 
-An AI-powered lyric-learning overlay. While a song is playing, LyricLens reads the current lyrics, asks a user-configured OpenAI-compatible Chat Completions endpoint to generate a learning card, and renders it inline with the lyric scroll.
+Listen to a song, turn its lyrics into language-learning cards as you go. NetEase Cloud Music plugin, standalone desktop app, and a mobile review PWA — three entries, one notebook. This repo is one of them: the BetterNCM plugin that runs inside NCM, reads the current lyrics, calls the OpenAI-compatible Chat Completions endpoint you configured, and renders the resulting learning card inline with the lyric scroll.
 
 ## Three hosts, one product
 
