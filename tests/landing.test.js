@@ -7,6 +7,7 @@ const worker = fs.readFileSync(path.join(__dirname, "..", "cloudflare-worker", "
 
 test("landing keeps the hero notebook phrase together at medium widths", () => {
   assert.match(worker, /\.hero \.lede \{[\s\S]*text-wrap:\s*balance;/);
+  assert.match(worker, /\.hero \.lede \{[\s\S]*word-break:\s*keep-all;/);
   assert.match(worker, /\.nowrap \{ white-space: nowrap; \}/);
   assert.match(worker, /手机复习器——<span class="nowrap">三个入口，一本笔记本。<\/span>/);
 });
