@@ -1570,7 +1570,7 @@ const LANDING_HTML = `<!doctype html>
   <details class="endpoints-section">
     <summary class="section-title">endpoints <span class="jp" lang="ja">· 開発者向け</span></summary>
     <div class="endpoints">
-      <div class="ep"><span class="verb">get</span><span class="path">/download</span><span class="note">302 → github release</span></div>
+      <div class="ep"><span class="verb">get</span><span class="path">/download</span><span class="note">release binary · r2 proxy · no-store</span></div>
       <div class="ep"><span class="verb">get</span><span class="path">/latest.json</span><span class="note">version · changelog · size · digest</span></div>
       <div class="ep"><span class="verb">get</span><span class="path">/changelog</span><span class="note">text · markdown</span></div>
       <div class="ep"><span class="verb">get</span><span class="path">/healthz</span><span class="note">ok</span></div>
