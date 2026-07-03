@@ -40,7 +40,7 @@
 ├─ ✅ Probe C · Cloudflare Worker + 子域名
 ├─ ✅ Task #1 · 子域名上线 + landing（带设计系统）
 ├─ ✅ Task #10 · build 固定文件名
-└─ ⏳ Task #2 · 插件内一键检查更新（前置都通了）
+└─ ⏳ Task #2 · 插件内一键检查更新（代码已全在 2026-06-30，等 v0.4.0 发布后走真机 update-available 链路收口）
 
 阶段 2 · 双轨地基
 ├─ ✅ Probe D · Now Playing API 覆盖率（task #13，SMTC/MRMR/MPRIS）
@@ -63,10 +63,10 @@
    SMTC reader、LRCLIB client、SQLite、独立 UI、.msi 安装包全部落地
 
 阶段 5 · 跨 host 验证
-├─ ⏳ 插件导出 → 桌面导入
-├─ ⏳ 桌面导出 → 插件导入
-├─ ⏳ 同一首歌两端 star 的 songKey 字节对齐实测
-├─ ⏳ Anki TSV 真导入 Anki smoke
+├─ ✅ 插件导出 → 桌面导入（merged 命中，实证 songKey 字节级一致）
+├─ ✅ 桌面导出 → 插件导入
+├─ ✅ 同一首歌两端 star 的 songKey 字节对齐实测
+├─ ⏳ Anki TSV 真导入 Anki smoke（不挡收官，改天补）
 └─ ✅ NotebookEntry conformance 对拍套件
 
 阶段 ∞ · 商业化（不一定做）
@@ -108,15 +108,15 @@
 
 ## ⚠️ 当前 IN-PROGRESS
 
-Stage 5 真机链路验证待做：插件导出→桌面导入、桌面导出→插件导入、同曲 songKey 字节对齐、Anki TSV 真导入。
+下一步是 v0.4.0 发版备货，并在 publish 后用旧版本机 NCM 走 Task #2 的 update-available 真机链路收口。
 
 ## 关键参考文档
 
 - [`probe-a-updater.md`](probe-a-updater.md) — BetterNCM 自更新能力 ✅
 - [`probe-b-storage.md`](probe-b-storage.md) — IndexedDB 持久化 ✅
 - [`probe-c-cloudflare.md`](probe-c-cloudflare.md) — 子域名 + Worker ✅
-- `probe-d-nowplaying.md` — SMTC/MRMR/MPRIS（待写）
-- `probe-e-lyrics-sources.md` — LRCLIB 覆盖率（待写）
+- `probe-d-nowplaying.md` — 结论已沉淀为路线决策 #18 + 桌面仓库 SMTC 实现；报告原文在 `C:\Users\15877\Downloads\lyriclens_smtc_timeline_research.md`
+- `probe-e-lyrics-sources.md` — LRCLIB 97.9% / 290 songs 结论已进入路线决策；benchmark 代码未保留
 - `../detached-window-feasibility.md` — 历史调研，独立窗口可行性
 - `C:\Users\15877\Downloads\LyricLens_next_stage_technical_research.md` — GPT 给的完整调研报告
 

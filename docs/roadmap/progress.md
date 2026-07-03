@@ -13,6 +13,15 @@ tag 含义：`[plan]` 路线决策 / `[probe]` probe 结果 / `[ship]` 产品功
 
 ---
 
+## 2026-07-03 [ship] Stage 5 跨 host 真机验收通过
+
+Yoru 真机验收插件导出→桌面导入、桌面导出→插件导入、同曲 songKey 字节级对齐三条主链路通过。
+
+- 插件导出 JSON 后桌面导入命中 `merged`，这是同曲 `songKey` 字节级一致的实证。
+- 桌面导出 JSON 后插件反向导入语义正确，重启后数据持久化正常。
+- Anki TSV 真导入这次没跑，不挡 Stage 5 收官，后续单独补 smoke。
+- 下一步是 v0.4.0 发版备货，并在 publish 后用旧版本 NCM 验收 Task #2 的 update-available 链路。
+
 ## 2026-07-02 [ship] 跨 host notebook conformance 套件落地并对齐 JSON key order
 
 Codex 按 cross-host brief 完成 NotebookEntry v1.1 对拍：桌面仓库新增 ignored Rust generator，主仓库新增 `tests/fixtures/cross-host/` golden 与 `tests/cross-host.test.js`。覆盖 makeSongKey、export entries、Anki TSV、merge 8 条分支、validate 拒绝集、import 混合批次。

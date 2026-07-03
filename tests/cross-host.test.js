@@ -14,7 +14,8 @@ function readJson(name) {
 }
 
 function readText(name) {
-  return fs.readFileSync(path.join(FIXTURE_DIR, name), "utf8");
+  // Windows checkouts may CRLF-normalize text fixtures; generated TSV uses LF.
+  return fs.readFileSync(path.join(FIXTURE_DIR, name), "utf8").replace(/\r\n/g, "\n");
 }
 
 function freshNotebook() {
