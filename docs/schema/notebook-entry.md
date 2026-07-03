@@ -133,6 +133,8 @@ function makeSongKey(title: string, artist: string, durationMs: number): string 
 ```
 
 - `schema` 字段是版本契约。**改字段含义必须升 schema 版本**。
+- `exportedFrom` 顶层来源允许 `"plugin"` / `"desktop"` / `"review"`。`"review"` 只表示 JSON envelope 由 LyricLens Review 导出；entry 级 `source` 仍然严格保持 `"plugin"` / `"desktop"`，Review 端不新建条目。
+- 2026-07-03 追加 `"review"` 是 additive 顶层 metadata 值域扩充，不改变 `NotebookEntry` 字段含义，**不 bump** 顶层 `schema` 字符串。
 - import 端遇到不认识的 schema 版本时 → 报错,不要"尽力解析"
 - entries 数组顺序不保证
 
