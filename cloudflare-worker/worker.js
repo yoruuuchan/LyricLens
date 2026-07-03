@@ -89,8 +89,14 @@ function downloadRedirect() {
 // First request after a release hydrates R2; subsequent requests are pure
 // R2 reads. Any breakage (no version, R2 down, upstream 5xx) silently
 // falls back to the legacy 302, so users always get *some* download.
+//
+// Reads version + asset_url from getLatestPayloadSnapshot so we never
+// disagree with /latest.json about which release we're currently
+// pointing at — see the snapshot function's block comment for the
+// 2026-07-03 incident that motivated the change.
 async function downloadResponse(env, ctx) {
-  const latest = await fetchLatestPayloadSafe();
+  const snapshot = await getLatestPayloadSnapshot(ctx);
+  const latest = snapshot.ok ? snapshot.body : null;
   if (!latest?.github_asset_url || !latest?.version) {
     return downloadRedirect();
   }
@@ -101,7 +107,7 @@ async function downloadResponse(env, ctx) {
       r2Key: `releases/${latest.version}/${ASSET_NAME}`,
       upstreamUrl: latest.github_asset_url,
       contentType: "application/octet-stream",
-      immutable: true,
+      cachePolicy: "no-store",
       disposition: `attachment; filename="${ASSET_NAME}"`,
     });
   } catch (err) {
@@ -112,39 +118,29 @@ async function downloadResponse(env, ctx) {
 
 // Bump CACHE_REV after a release to invalidate edge cache without waiting
 // out CACHE_TTL_SECONDS. cache.default keys on the full Request URL.
-const CACHE_REV = "v8";
+//
+// v9 (2026-07-03): every /latest.json, /download, /changelog and /
+// version chip now reads from a single shared snapshot cached under
+// this rev — bumping the rev cleared the last stragglers of the
+// pre-fix independent per-route cache entries.
+const CACHE_REV = "v9";
 
 async function latestJsonResponse(ctx) {
-  const cache = caches.default;
-  const cacheKey = new Request(`https://cache.lyriclens/latest.json?rev=${CACHE_REV}`);
-  const cached = await cache.match(cacheKey);
-  if (cached) return cached;
-
-  const payload = await fetchLatestPayload();
-  const status = payload.ok ? 200 : 502;
-  const resp = new Response(JSON.stringify(payload.body, null, 2), {
+  const snapshot = await getLatestPayloadSnapshot(ctx);
+  const status = snapshot.ok ? 200 : 502;
+  return new Response(JSON.stringify(snapshot.body, null, 2), {
     status,
-    headers: jsonHeaders(payload.ok ? CACHE_TTL_SECONDS : 30),
+    headers: jsonHeaders(snapshot.ok ? CACHE_TTL_SECONDS : 30),
   });
-  // Only cache successful responses to avoid pinning a 502 for 10 min.
-  if (payload.ok) ctx.waitUntil(cache.put(cacheKey, resp.clone()));
-  return resp;
 }
 
 async function changelogResponse(ctx) {
-  const cache = caches.default;
-  const cacheKey = new Request(`https://cache.lyriclens/changelog?rev=${CACHE_REV}`);
-  const cached = await cache.match(cacheKey);
-  if (cached) return cached;
-
-  const payload = await fetchLatestPayload();
-  if (!payload.ok) {
+  const snapshot = await getLatestPayloadSnapshot(ctx);
+  if (!snapshot.ok) {
     return new Response("upstream lookup failed", { status: 502, headers: textHeaders(30) });
   }
-  const body = payload.body.changelog || "(no changelog)";
-  const resp = new Response(body, { status: 200, headers: textHeaders(CACHE_TTL_SECONDS) });
-  ctx.waitUntil(cache.put(cacheKey, resp.clone()));
-  return resp;
+  const body = snapshot.body.changelog || "(no changelog)";
+  return new Response(body, { status: 200, headers: textHeaders(CACHE_TTL_SECONDS) });
 }
 
 async function fetchLatestPayload() {
@@ -198,12 +194,14 @@ async function fetchLatestPayload() {
 }
 
 async function landingResponse(ctx) {
-  // Fan-out: README + latest release in parallel. Both have their own
-  // edge-cache layers so most requests skip the upstream hop entirely.
-  const [readme, latest] = await Promise.all([
+  // Fan-out: README + latest release snapshot in parallel. Both have
+  // their own edge-cache layers so most requests skip the upstream hop
+  // entirely.
+  const [readme, snapshot] = await Promise.all([
     fetchReadmeParts(ctx),
-    fetchLatestPayloadSafe(),
+    getLatestPayloadSnapshot(ctx),
   ]);
+  const latest = snapshot.ok ? snapshot.body : null;
 
   const versionTag = latest?.version ? `v${latest.version}` : "";
   const versionMeta = latest?.published_at
@@ -219,15 +217,43 @@ async function landingResponse(ctx) {
   return new Response(body, { status: 200, headers: htmlHeaders(60) });
 }
 
-// Wraps fetchLatestPayload so a failed GitHub call doesn't blow up the
-// landing render — we just skip the version chip in that case.
-async function fetchLatestPayloadSafe() {
-  try {
-    const payload = await fetchLatestPayload();
-    return payload.ok ? payload.body : null;
-  } catch (_) {
-    return null;
+// Single-writer / multi-reader cache for the latest-release payload.
+// All routes that need the current version, asset_url, changelog, or
+// digest MUST go through this — never call fetchLatestPayload directly
+// from a route handler. This is what makes /latest.json, /download,
+// /changelog, and the landing version chip return byte-consistent
+// release data within one CACHE_TTL_SECONDS window.
+//
+// Motivation (2026-07-03 v1.0.0 release incident): the old design had
+// /latest.json cached in caches.default while /download went through
+// its own CF sub-request cache when calling fetchLatestPayload. The
+// two caches expired independently, so during a ~10-min window after
+// a release /latest.json returned the new version while /download
+// still handed out the previous asset. Downloads then failed SHA-256
+// verification on the client. Reading everything from the same
+// snapshot forbids that skew — either every route sees the new
+// payload or every route still sees the old one, no half-updated
+// state.
+async function getLatestPayloadSnapshot(ctx) {
+  const cache = caches.default;
+  const cacheKey = new Request(`https://cache.lyriclens/snapshot?rev=${CACHE_REV}`);
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    try {
+      return { ok: true, body: await cached.json() };
+    } catch (_) {
+      // Corrupt snapshot — fall through and refetch.
+    }
   }
+  const payload = await fetchLatestPayload();
+  if (payload.ok) {
+    const snapshot = new Response(JSON.stringify(payload.body), {
+      status: 200,
+      headers: jsonHeaders(CACHE_TTL_SECONDS),
+    });
+    ctx.waitUntil(cache.put(cacheKey, snapshot.clone()));
+  }
+  return payload;
 }
 
 function formatPubDate(iso) {
@@ -561,7 +587,7 @@ async function fontProxyResponse(filename, env, ctx) {
       r2Key: `fonts/${filename}`,
       upstreamUrl: upstream,
       contentType: "font/woff2",
-      immutable: true,
+      cachePolicy: "immutable",
     });
   } catch (err) {
     try { console.warn(`[LyricLens] font proxy failed for ${filename}:`, err?.message || err); } catch (_) {}
@@ -574,7 +600,22 @@ async function fontProxyResponse(filename, env, ctx) {
 // the caller can decide how to fall back. R2 misuse (binding missing,
 // get/put errors) degrades to a one-shot upstream fetch instead of
 // failing the whole request — the landing page still loads.
-async function assetProxy({ env, ctx, r2Key, upstreamUrl, contentType, immutable, disposition }) {
+//
+// cachePolicy — one of "immutable" | "no-store". Selects both the
+// downstream response's Cache-Control header AND the CF sub-request
+// cache behavior for the upstream fetch:
+//
+//   "immutable" — fonts. Keyed by filename, content byte-identical
+//     across releases → safe to sit forever in any HTTP disk cache.
+//     Edge caches upstream for cacheTtl to skip jsdelivr hops.
+//
+//   "no-store"  — release binaries served under an unversioned URL
+//     like /download. MUST NOT enter any HTTP disk cache — a poisoned
+//     entry keeps replaying past releases with zero network fetch
+//     (verified against NCM's embedded Chromium on 2026-07-03). No
+//     downstream cache, no CF sub-request cache; R2 hit is fine (that
+//     layer is per-version keyed and refreshed on every deploy).
+async function assetProxy({ env, ctx, r2Key, upstreamUrl, contentType, cachePolicy, disposition }) {
   const bucket = env?.R2_ASSETS;
   if (bucket) {
     try {
@@ -582,7 +623,7 @@ async function assetProxy({ env, ctx, r2Key, upstreamUrl, contentType, immutable
       if (cached) {
         return new Response(cached.body, {
           status: 200,
-          headers: assetHeaders(contentType, immutable, disposition),
+          headers: assetHeaders(contentType, cachePolicy, disposition),
         });
       }
     } catch (err) {
@@ -592,9 +633,17 @@ async function assetProxy({ env, ctx, r2Key, upstreamUrl, contentType, immutable
     try { console.warn(`[LyricLens] R2_ASSETS not bound; serving ${r2Key} direct from upstream`); } catch (_) {}
   }
 
+  // Fonts benefit from an edge cache tier on top of R2 — they're
+  // byte-identical across versions. Release binaries must skip it:
+  // R2 is already the "hot cache" and an edge tier on an unversioned
+  // URL would keep replaying the previous release for cacheTtl
+  // seconds after we ship a new one.
+  const edgeCache = cachePolicy === "no-store"
+    ? { cacheEverything: false }
+    : { cacheTtl: 3600, cacheEverything: true };
   const upstream = await fetch(upstreamUrl, {
     headers: { "User-Agent": USER_AGENT, "Accept": "*/*" },
-    cf: { cacheTtl: 3600, cacheEverything: true },
+    cf: edgeCache,
     redirect: "follow",
   });
   if (!upstream.ok) {
@@ -611,16 +660,27 @@ async function assetProxy({ env, ctx, r2Key, upstreamUrl, contentType, immutable
   }
   return new Response(buf, {
     status: 200,
-    headers: assetHeaders(contentType, immutable, disposition),
+    headers: assetHeaders(contentType, cachePolicy, disposition),
   });
 }
 
-function assetHeaders(contentType, immutable, disposition) {
+function assetHeaders(contentType, cachePolicy, disposition) {
+  let cacheControl;
+  if (cachePolicy === "immutable") {
+    cacheControl = "public, max-age=31536000, immutable";
+  } else if (cachePolicy === "no-store") {
+    // See assetProxy's block comment. NCM's embedded Chromium honored
+    // the old `immutable` for a year without ever hitting the network
+    // again, poisoning the /download URL past the release window.
+    // `no-store` is the only Cache-Control that reliably forbids
+    // every intermediate cache from persisting the response.
+    cacheControl = "no-store";
+  } else {
+    cacheControl = "public, max-age=86400";
+  }
   const headers = {
     "content-type": contentType,
-    "cache-control": immutable
-      ? "public, max-age=31536000, immutable"
-      : "public, max-age=86400",
+    "cache-control": cacheControl,
     // Fonts and other cross-origin sub-resources need this when the consumer
     // sets crossorigin on the <link> / @font-face request.
     "access-control-allow-origin": "*",
