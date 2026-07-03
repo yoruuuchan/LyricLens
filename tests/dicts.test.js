@@ -104,7 +104,12 @@ const JLPT_ENTRIES = padEntries({
 
 const ENEXAM_ENTRIES = padEntries({
   abandon: ["gaokao", "cet4", "kaoyan"],
-  abolish: ["gaokao", "cet6", "kaoyan"]
+  abolish: ["gaokao", "cet6", "kaoyan"],
+  // v1.1 additions — community weak labels alongside the Chinese-exam
+  // tags. `marvellous` only carries the community tags; `precipitate`
+  // spans both tiers so we can prove tag-order preservation.
+  marvellous: ["ielts-community", "toefl-community"],
+  precipitate: ["cet6", "kaoyan", "ielts-community", "toefl-community"]
 }, () => ["cet4"]);
 
 const CEFRJ_ENTRIES = padEntries({
@@ -166,6 +171,13 @@ test("bootstrapAll loads all three families through gzip + sha256 and lookups an
     // enexam: lowercase exact, full tag list, miss is []
     assert.deepEqual(Dicts.enexamLookup("Abandon"), ["gaokao", "cet4", "kaoyan"]);
     assert.deepEqual(Dicts.enexamLookup("nonexistent"), []);
+    // v1.1: community weak labels come through as ordinary tag values;
+    // the caller filters by tag == targetExam.
+    assert.deepEqual(Dicts.enexamLookup("Marvellous"), ["ielts-community", "toefl-community"]);
+    assert.deepEqual(
+      Dicts.enexamLookup("precipitate"),
+      ["cet6", "kaoyan", "ielts-community", "toefl-community"]
+    );
 
     // cefrj: lowercase exact incl. phrases, miss is null
     assert.equal(Dicts.cefrjLookup("Above"), "A1");

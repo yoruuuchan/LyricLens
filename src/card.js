@@ -150,8 +150,12 @@
     head.appendChild(cefrj);
   }
 
-  function makeBadge(text, title) {
-    const badge = el("span", "ll-dict-badge", text);
+  function makeBadge(text, title, variant) {
+    // `variant` (optional) toggles a modifier class like
+    // ll-dict-badge--community for the softer IELTS/TOEFL pill; the
+    // base class stays put so shared styles keep matching.
+    const className = variant ? `ll-dict-badge ll-dict-badge--${variant}` : "ll-dict-badge";
+    const badge = el("span", className, text);
     badge.title = title;
     return badge;
   }
@@ -196,7 +200,16 @@
         fillSlot(slot, null);
         continue;
       }
-      fillSlot(slot, makeBadge(Dicts.EXAM_TAG_LABELS[targetExam] || targetExam, Dicts.EXAM_BADGE_TITLE));
+      // Community weak labels (ielts-community / toefl-community) get
+      // a softer visual + a distinct tooltip that names the ECDICT
+      // single-source provenance — schema doc §UI 渲染规则.
+      const isCommunity = targetExam.endsWith("-community");
+      const title = isCommunity ? Dicts.COMMUNITY_EXAM_BADGE_TITLE : Dicts.EXAM_BADGE_TITLE;
+      fillSlot(slot, makeBadge(
+        Dicts.EXAM_TAG_LABELS[targetExam] || targetExam,
+        title,
+        isCommunity ? "community" : null
+      ));
     }
 
     for (const slot of Array.from(rootNode.querySelectorAll(".ll-cefrj-slot"))) {

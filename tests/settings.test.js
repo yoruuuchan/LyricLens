@@ -169,7 +169,13 @@ test("normalizeSettings validates targetExam and defaults to off", () => {
   assert.equal(normalizeSettings({}).targetExam, "off");
   assert.equal(normalizeSettings({ targetExam: "cet4" }).targetExam, "cet4");
   assert.equal(normalizeSettings({ targetExam: "kaoyan" }).targetExam, "kaoyan");
-  // Unknown values (incl. future ielts/toefl before they ship) fall back to off
+  // v1.1 community weak labels are first-class values.
+  assert.equal(normalizeSettings({ targetExam: "ielts-community" }).targetExam, "ielts-community");
+  assert.equal(normalizeSettings({ targetExam: "toefl-community" }).targetExam, "toefl-community");
+  // Raw ECDICT tag names without the "-community" suffix are NOT valid
+  // targets — the suffix is load-bearing at UI attribution time
+  // (schema doc §UI 渲染规则 mandates the softer "社区" wording).
   assert.equal(normalizeSettings({ targetExam: "ielts" }).targetExam, "off");
+  assert.equal(normalizeSettings({ targetExam: "toefl" }).targetExam, "off");
   assert.equal(normalizeSettings({ targetExam: 42 }).targetExam, "off");
 });

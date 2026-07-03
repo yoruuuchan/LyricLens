@@ -13,6 +13,27 @@ tag 含义：`[plan]` 路线决策 / `[probe]` probe 结果 / `[ship]` 产品功
 
 ---
 
+## 2026-07-03 [ship] v0.4.0 → v0.4.1 → v1.0.0 备货 · IELTS/TOEFL 弱标签 + 三 host 里程碑
+
+Stage 5 收官后一连串备货活动：v0.4.0 draft release workflow 落地 → 真机撞到 `crypto.subtle` 未定义 → v0.4.1 SHA-256 fallback → 同期 Review PWA 三期上线（第三 host 就位）→ IELTS/TOEFL 社区弱标签 v1.1 → manifest bump 到 1.0.0（三 host + 六个考试标签里程碑）。**v1.0.0 tag/publish 未做**，等 Yoru 手机端验收 + CDN 发布完成后 Claude 执行 `release.ps1`（同时是 Task #2 update-available 链路的真机收口）。
+
+- **v0.4.0 发版工作流**（[#34](https://github.com/yoruuuchan/LyricLens/pull/34) `scripts/release.ps1` + gh release draft）：Stage 5 收官顺势备货。Yoru 拉了 v0.4.0 draft 真机 install 时炸——NCM Chromium 91 的 `crypto.subtle` 在 `file:///` 上下文未定义
+- **v0.4.1 SHA-256 fallback**（[#36](https://github.com/yoruuuchan/LyricLens/pull/36)）：`src/utils.js` 加纯 JS `sha256HexSync`（滑动窗口 + 32-bit ops）；`src/updater.js` 和 `src/dicts.js` 的 blob 校验都改成 `subtle.digest` 优先、`sha256HexSync` 兜底、双都不可用则 warn+跳过。测试 401 → 411（fallback vs subtle 交叉验证 + 已知向量 + Node crypto block-boundary 对拍）。manifest bump 到 0.4.1（[feae726]），Yoru 真机重装通过
+- **Review PWA 部署** — 同期 [`yoruuuchan/lyriclens-review`](https://github.com/yoruuuchan/lyriclens-review) 私仓三期上线：PR #1 数据层（`crypto.randomUUID` uuid v4 fallback / IDB store / 跨 host conformance）+ #2 移动 UI 六屏（review / notebook / settings / bottom tab / song picker / JSON import-export）+ #3 PWA manifest + Service Worker CACHE_VERSION 纪律 + Cloudflare Workers Static Assets 部署。三 host 数据经 `NotebookEntry` envelope 打通——[dd92c09] docs: allow review export envelopes 追加 `exportedFrom: "review"` additive 值（顶层 schema 不 bump）。**LyricLens 从此三 host**：Plugin（NCM）+ Desktop（Tauri）+ Review PWA（移动浏览器）
+- **IELTS/TOEFL 社区弱标签 v1.1**（本 PR 三 commit）：
+  1. **管道** `scripts/preprocess-enexam.mjs`：从 ECDICT `ielts`/`toefl` tag 单源提取——无 roster 互证（无干净雅思托福 headword list，见 [`research-ielts-toefl-license.md`](research-ielts-toefl-license.md) §候选源盘点）。输出 tag 命名 `ielts-community` / `toefl-community` 显式标弱标签。`SCALE_CHECKS` 加 `[4500, 5500]` / `[6500, 7500]` 两条 band，实测 `ielts=5038` / `toefl=6970`，总 entries **6734 → 11041**；顶层 `schema:1` additive 不 bump
+  2. **插件 UI**：`src/dicts.js` `TARGET_EXAMS` / `EXAM_TAG_LABELS` 加两值 + `COMMUNITY_EXAM_BADGE_TITLE` 独立 tooltip；`src/settings.js` `VALID_TARGET_EXAMS` 5 → 7；`src/panel.js` targetExam 下拉多两项「IELTS（社区）/ TOEFL（社区）」+ About attribution 增加 ECDICT 单源说明；`src/card.js` `makeBadge` 接 variant + `hydrateDictBadges` 命中社区 tag 走独立 tooltip；`styles/panel.css` `.ll-dict-badge--community` = line-strong 边框 + text-muted 文字 + opacity 0.7 = 淡一档
+  3. **schema doc** `en-exam-vocab.md` §双源互证构建规则 → §构建规则（混合模式）；tag 枚举扩充；§UI 渲染规则加社区变体表 + 独立 tooltip；attribution 加 British Council / IDP / ETS 免责；调研报告 status: research → adopted
+  - 测试 **411 → 412 全绿**；npm run build 通过（LyricLens.plugin 501.7 KB）
+- **manifest.json 0.4.1 → 1.0.0**：三 host 上线（plugin + desktop + Review PWA）+ 六个考试标签（gaokao / cet4 / cet6 / kaoyan + ielts-community / toefl-community）= v1.0 里程碑。**tag/publish 不做**（等真机验收）；`scripts/release.ps1 -Version 1.0.0 -DryRun` 走过，output 贴 PR 描述
+- **Task #2 update-available 链路** 收口部署：本机 0.4.1 已带 SHA-256 fallback；v1.0.0 publish 后用旧版本 NCM 走真机 update-available 链路验收（Task #2 最终验收）
+
+下一步（**移交给 Yoru + Claude 下一 session**）：
+- CDN 发布 v1.1 blob（新 build `multi-20260703.v1`，`.br` + `.gz` 平行 upload，manifest 收尾）
+- Yoru 三端联动验收：IELTS/TOEFL badge + 淡一档视觉 + Review PWA 消费桌面导出的 JSON + mastery 反流
+- `release.ps1 -Version 1.0.0` publish（Task #2 真机收口同步）
+- 挂尾：Anki TSV 真导入 smoke（Stage 5 ⏳，本轮商定推迟到 v1.0 之后 session）
+
 ## 2026-07-03 [ship] Stage 5 跨 host 真机验收通过
 
 Yoru 真机验收插件导出→桌面导入、桌面导出→插件导入、同曲 songKey 字节级对齐三条主链路通过。

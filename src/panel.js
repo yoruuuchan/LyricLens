@@ -1358,8 +1358,16 @@
       learning.appendChild(selectSetting(
         "目标考试标签",
         "targetExam",
-        [["off", "关闭"], ["gaokao", "高考"], ["cet4", "CET-4"], ["cet6", "CET-6"], ["kaoyan", "考研"]],
-        "选中后，英语词汇点命中该考纲时在卡片上显示参考标签。JLPT / CEFR-J 等级徽章不受此项影响，命中即显示。"
+        [
+          ["off", "关闭"],
+          ["gaokao", "高考"],
+          ["cet4", "CET-4"],
+          ["cet6", "CET-6"],
+          ["kaoyan", "考研"],
+          ["ielts-community", "IELTS（社区）"],
+          ["toefl-community", "TOEFL（社区）"]
+        ],
+        "选中后，英语词汇点命中该考纲时在卡片上显示参考标签。IELTS / TOEFL 为社区弱标签（ECDICT 单源），pill 淡一档标注「社区参考·非官方」。JLPT / CEFR-J 等级徽章不受此项影响，命中即显示。"
       ));
       body.appendChild(learning);
 
@@ -1600,11 +1608,11 @@
         "英语考试参考标签",
         [
           ["CET 名单", "JavaProgrammerLB/cet-word-list"],
-          ["级别标签", "skywind3000/ECDICT"],
+          ["级别标签 / IELTS·TOEFL 弱标签源", "skywind3000/ECDICT"],
           ["高考名单", "pluto0x0/word3500"],
           ["许可", "MIT · 交叉整理"]
         ],
-        "高考 / CET-4 / CET-6 / 考研标签由以上 MIT 协议开源项目交叉整理，仅保留单词与考试标签两个字段，不含释义、音标、例句。标签为社区整理的参考信息，与教育部教育考试院及任何考试主办方无关联，未获任何官方背书。在 AI 服务 → 目标考试标签中选择考试体系后显示。"
+        "高考 / CET-4 / CET-6 / 考研由以上 MIT 项目交叉整理；IELTS / TOEFL 为 ECDICT `ielts`/`toefl` tag 单源整理的社区弱标签，pill 视觉上淡一档。仅保留单词与考试标签两个字段，不含释义、音标、例句。与教育部教育考试院、British Council、IDP、ETS 及任何考试主办方无关联，未获任何官方背书。在 AI 服务 → 目标考试标签中选择体系后显示。"
       ));
       section.appendChild(dictAttributionBlock(
         "CEFR-J 参考等级",
