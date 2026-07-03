@@ -10,26 +10,30 @@
 
 ## 北极星目标（2026-06-29 重新明确）
 
-**LyricLens 是"一个产品，两个 host"。**
+**LyricLens 是"一个产品，三个 host"**（v1.0 起）。
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ LyricLens Core（独立 lib，host-agnostic）                  │
 │  prompt / LLM / data schema / vocab indexing / card render  │
 └─────────────────────────────────────────────────────────────┘
-              ▲                                ▲
-              │ host 1                         │ host 2
-┌─────────────────────────┐         ┌─────────────────────────┐
-│ Plugin (BetterNCM)      │         │ Desktop (Tauri)          │
-│ src: NCM 注入            │         │ src: SMTC/MRMR/MPRIS    │
-│ storage: IndexedDB      │         │ storage: SQLite          │
-│ ui: NCM 浮层            │         │ ui: 独立窗口             │
-│ lyrics: NCM 内存        │         │ lyrics: LRCLIB+公开 API │
-└─────────────────────────┘         └─────────────────────────┘
-                  ↕  JSON 导出 / 导入互通（不实时同步）
+     ▲                    ▲                     ▲
+     │ host 1             │ host 2              │ host 3 · v1.0
+┌────────────────┐   ┌────────────────┐   ┌────────────────────┐
+│ Plugin         │   │ Desktop        │   │ Review PWA         │
+│ (BetterNCM)    │   │ (Tauri)        │   │ (Cloudflare Static)│
+│ IndexedDB      │   │ SQLite         │   │ IndexedDB          │
+│ NCM 浮层       │   │ 独立窗口       │   │ 移动端浏览器       │
+│ 分析 + 收藏    │   │ 分析 + 收藏    │   │ 只复习（read/rate）│
+└────────────────┘   └────────────────┘   └────────────────────┘
+                    ↕  NotebookEntry JSON 导出 / 导入互通（不实时同步）
 ```
 
-**Plugin 和 Desktop 都是独立完整产品**。两边数据格式打通，用户可以二选一、或两边都装。**BetterNCM 任何时候死了，Desktop 那一支不受影响。**
+**三个 host 各自独立完整**，但角色分层：
+- Plugin / Desktop 是**分析型 host** —— 边听歌边生成学习卡、支持收藏（producer + consumer）
+- Review PWA 是**复习型 host** —— 移动端做单词卡片复习，把 `mastery` 评分反流回其他两 host（read + rate + write mastery，不新建条目）；仓库 [`yoruuuchan/lyriclens-review`](https://github.com/yoruuuchan/lyriclens-review) 私有
+
+两两互通经 [`NotebookEntry`](../schema/notebook-entry.md) JSON envelope，`exportedFrom` v1.1 起支持 `"plugin" | "desktop" | "review"`（entry 级 `source` 仍严格 plugin/desktop，Review 端不新建条目）。**BetterNCM 任何时候死了，Desktop / Review 两支不受影响。**
 
 ## 当前阶段地图
 
@@ -40,7 +44,7 @@
 ├─ ✅ Probe C · Cloudflare Worker + 子域名
 ├─ ✅ Task #1 · 子域名上线 + landing（带设计系统）
 ├─ ✅ Task #10 · build 固定文件名
-└─ ⏳ Task #2 · 插件内一键检查更新（代码已全在 2026-06-30，等 v0.4.0 发布后走真机 update-available 链路收口）
+└─ ⏳ Task #2 · 插件内一键检查更新（等 v1.0.0 publish 后走真机 update-available 链路收口；本机 0.4.1 已带 SHA-256 fallback）
 
 阶段 2 · 双轨地基
 ├─ ✅ Probe D · Now Playing API 覆盖率（task #13，SMTC/MRMR/MPRIS）
@@ -53,6 +57,7 @@
 ├─ ✅ Task #5 · 词库 CDN（dicts.yoru-and-akari.dev）
 ├─ ✅ JLPT 参考等级 badge
 ├─ ✅ 英语考试标签 badge（高考 / CET-4 / CET-6 / 考研）
+├─ ✅ IELTS / TOEFL 社区弱标签 badge（v1.1，ECDICT 单源，淡一档）
 ├─ ✅ CEFR-J 参考等级 badge
 ├─ ✅ Task #6 · 笔记本式收藏（插件 IDB / 桌面 SQLite）
 ├─ ✅ JSON 导入/导出 + Anki TSV
@@ -68,6 +73,13 @@
 ├─ ✅ 同一首歌两端 star 的 songKey 字节对齐实测
 ├─ ⏳ Anki TSV 真导入 Anki smoke（不挡收官，改天补）
 └─ ✅ NotebookEntry conformance 对拍套件
+
+阶段 6 · Review PWA · v1.0 第三 host 上线
+├─ ✅ Phase 1 · 数据层（notebook schema 逻辑 / mastery 写入 / IDB store / 跨 host conformance；review 仓库 PR #1）
+├─ ✅ Phase 2 · 移动 UI（六屏 + JSON import/export + rating + notebook filter；PR #2）
+├─ ✅ Phase 3 · PWA manifest + Service Worker CACHE_VERSION 纪律 + Cloudflare Workers Static Assets 部署（PR #3）
+├─ ✅ NotebookEntry envelope `exportedFrom` 加 `"review"`（additive，顶层 schema 不 bump）
+└─ ⏳ v1.0 里程碑发版（本机 handoff 后 · IELTS/TOEFL + manifest 1.0.0 + release.ps1 publish）
 
 阶段 ∞ · 商业化（不一定做）
 ```
@@ -108,7 +120,11 @@
 
 ## ⚠️ 当前 IN-PROGRESS
 
-下一步是 v0.4.0 发版备货，并在 publish 后用旧版本机 NCM 走 Task #2 的 update-available 真机链路收口。
+v1.0.0 备货已完成（IELTS/TOEFL 弱标签落地 + 三 host 里程碑 + manifest 1.0.0 + release.ps1 DryRun 走过）。下一步：
+
+1. **CDN 发布 v1.1 enexam blob**（`multi-20260703.v1`，`.br` + `.gz` 平行；PR merge 前可执行——新 blob 对旧客户端零影响）
+2. **Yoru 手机端 + 桌面 + NCM 三端联动验收**：IELTS/TOEFL badge 显示 + 淡一档视觉 + tooltip「社区参考·非官方」+ Review PWA JSON import 消费桌面导出 + mastery 反流
+3. **`release.ps1 -Version 1.0.0` 真跑 publish**（Claude 执行；同时是 Task #2 update-available 真机收口——用旧版本 NCM 走一遍 update-available 链路）
 
 ## 关键参考文档
 
