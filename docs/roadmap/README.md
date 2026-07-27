@@ -26,14 +26,15 @@
 │ NCM 浮层       │   │ 独立窗口       │   │ 移动端浏览器       │
 │ 分析 + 收藏    │   │ 分析 + 收藏    │   │ 只复习（read/rate）│
 └────────────────┘   └────────────────┘   └────────────────────┘
-                    ↕  NotebookEntry JSON 导出 / 导入互通（不实时同步）
+                    ↕  NotebookEntry JSON 全端互通
+                       Desktop ↔ Review 另有端到端加密接力
 ```
 
 **三个 host 各自独立完整**，但角色分层：
 - Plugin / Desktop 是**分析型 host** —— 边听歌边生成学习卡、支持收藏（producer + consumer）
 - Review PWA 是**复习型 host** —— 移动端做单词卡片复习，把 `mastery` 评分反流回其他两 host（read + rate + write mastery，不新建条目）；仓库 [`yoruuuchan/lyriclens-review`](https://github.com/yoruuuchan/lyriclens-review) 私有
 
-两两互通经 [`NotebookEntry`](../schema/notebook-entry.md) JSON envelope，`exportedFrom` v1.1 起支持 `"plugin" | "desktop" | "review"`（entry 级 `source` 仍严格 plugin/desktop，Review 端不新建条目）。**BetterNCM 任何时候死了，Desktop / Review 两支不受影响。**
+两两互通经 [`NotebookEntry`](../schema/notebook-entry.md) JSON envelope，`exportedFrom` v1.1 起支持 `"plugin" | "desktop" | "review"`（entry 级 `source` 仍严格 plugin/desktop，Review 端不新建条目）。2026-07-03 起 Desktop ↔ Review 追加短时密文 dead-drop 接力；插件仍走 JSON。**BetterNCM 任何时候死了，Desktop / Review 两支不受影响。**
 
 ## 当前阶段地图
 
@@ -44,7 +45,7 @@
 ├─ ✅ Probe C · Cloudflare Worker + 子域名
 ├─ ✅ Task #1 · 子域名上线 + landing（带设计系统）
 ├─ ✅ Task #10 · build 固定文件名
-└─ ⏳ Task #2 · 插件内一键检查更新（等 v1.0.0 publish 后走真机 update-available 链路收口；本机 0.4.1 已带 SHA-256 fallback）
+└─ ✅ Task #2 · 插件内一键检查更新（v1.0.0 已发布，固定资产名 + SHA-256 fallback）
 
 阶段 2 · 双轨地基
 ├─ ✅ Probe D · Now Playing API 覆盖率（task #13，SMTC/MRMR/MPRIS）
@@ -79,7 +80,7 @@
 ├─ ✅ Phase 2 · 移动 UI（六屏 + JSON import/export + rating + notebook filter；PR #2）
 ├─ ✅ Phase 3 · PWA manifest + Service Worker CACHE_VERSION 纪律 + Cloudflare Workers Static Assets 部署（PR #3）
 ├─ ✅ NotebookEntry envelope `exportedFrom` 加 `"review"`（additive，顶层 schema 不 bump）
-└─ ⏳ v1.0 里程碑发版（本机 handoff 后 · IELTS/TOEFL + manifest 1.0.0 + release.ps1 publish）
+└─ ✅ v1.0 里程碑发版（v1.0.0 已发布）
 
 阶段 ∞ · 商业化（不一定做）
 ```
@@ -90,7 +91,7 @@
 
 1. **北极星 = 双 host，独立桌面版是明确目标**（不是 fallback）。所有架构决策都要为双 host 服务。
 2. **Plugin 和 Desktop 都是独立完整产品**，不是主从关系。用户任选一边都能用满所有功能。
-3. **两边通过数据格式打通**（JSON 导入/导出），不做实时同步——那个太贵。
+3. **全端通过数据格式打通**（JSON 导入/导出）。2026-07-03 追加的 Desktop ↔ Review 接力是用户主动推送/拉取的短时密文 dead-drop，不是常驻后台实时同步；Plugin ↔ Desktop 仍只走 JSON。
 4. **远期"脱离 BetterNCM"靠 SMTC + LRCLIB + 独立桌面端**，不靠"手动粘歌词"。
 5. **多语言 = 用户自己写 prompt**。插件不限制语言种类。
 6. **词库走 CDN**，不内嵌进 .plugin。
@@ -115,16 +116,12 @@
 14. **收藏粒度 = 一句歌词的整张卡片**。原文 + 翻译 + 全部 highlights + LLM note + 用户备注打包成一条 `NotebookEntry`。**不做单 highlight 粒度、不做单词粒度**。
 15. **跨 host 数据合并 = 两边都保留**。冲突时 `userNote` 用 `\n---来自 <source>---\n` 拼接，import 不覆盖本地。
 16. **核心数据模型 = `NotebookEntry`**。两个 host 都按 [`docs/schema/notebook-entry.md`](../schema/notebook-entry.md) 实现。
-17. **永久砍掉的方向**（明示，避免反复诱惑）：WASAPI loopback 推导歌曲 position / 网易云 InfLink-rs 兼容（让插件版去操心）/ Spotify Web API 深度集成（政策风险）/ macOS MRMediaRemote / 任何苹果生态 / 实时双 host 同步 / SRS 间隔复习 / 词频统计 / WAV onset 自动对齐 LRC。
+17. **永久砍掉的方向**（明示，避免反复诱惑）：WASAPI loopback 推导歌曲 position / 网易云 InfLink-rs 兼容（让插件版去操心）/ Spotify Web API 深度集成（政策风险）/ macOS MRMediaRemote / 任何苹果生态 / 常驻后台实时双 host 同步 / SRS 间隔复习 / 词频统计 / WAV onset 自动对齐 LRC。Desktop ↔ Review 的用户主动短时密文接力不属于常驻实时同步。
 18. **桌面版"播放器能力"按 timeline health 分级**，不按播放器名一刀切。`timeline_healthy` 才启用逐行同步；`metadata_only` 只显示静态笔记本式卡片。详细分类参考 SMTC timeline 调研报告 §7。
 
-## ⚠️ 当前 IN-PROGRESS
+## 当前状态
 
-v1.0.0 备货已完成（IELTS/TOEFL 弱标签落地 + 三 host 里程碑 + manifest 1.0.0 + release.ps1 DryRun 走过）。下一步：
-
-1. **CDN 发布 v1.1 enexam blob**（`multi-20260703.v1`，`.br` + `.gz` 平行；PR merge 前可执行——新 blob 对旧客户端零影响）
-2. **Yoru 手机端 + 桌面 + NCM 三端联动验收**：IELTS/TOEFL badge 显示 + 淡一档视觉 + tooltip「社区参考·非官方」+ Review PWA JSON import 消费桌面导出 + mastery 反流
-3. **`release.ps1 -Version 1.0.0` 真跑 publish**（Claude 执行；同时是 Task #2 update-available 真机收口——用旧版本 NCM 走一遍 update-available 链路）
+v1.0.0 已于 2026-07-03 发布；三个 host、IELTS/TOEFL 弱标签、固定名更新资产和 Desktop ↔ Review 加密接力均已上线。后续工作按 issue / PR 重新排期，不再沿用发布前的 IN-PROGRESS 清单。
 
 ## 关键参考文档
 

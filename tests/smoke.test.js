@@ -3,6 +3,13 @@ const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
 
+test("package and plugin manifest versions stay aligned", () => {
+  const root = path.resolve(__dirname, "..");
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
+  assert.equal(pkg.version, manifest.version);
+});
+
 test("manifest.json injects file list matches built plugin contents", () => {
   const root = path.resolve(__dirname, "..");
   const manifestPath = path.join(root, "manifest.json");
