@@ -14,7 +14,7 @@ LyricLens 是「一个产品，三个 host」（v1.0），本仓库是 host 1（
 | **桌面（采集）** | [`lyriclens-desktop`](https://github.com/yoruuuchan/lyriclens-desktop) | 独立 Windows 应用 | 靠 SMTC + LRCLIB 独立运转，不依赖 BetterNCM |
 | **Review PWA（复习）** | [`lyriclens-review`](https://github.com/yoruuuchan/lyriclens-review) · [直达](https://lyriclens-review.yoru-and-akari.dev) | 手机浏览器（可装桌面图标） | 把加过星的条目挪到手机上评级复习、Anki 导出 |
 
-三个 host 都是独立完整产品，**互不依赖**——两个采集侧任一停更另一个独立运转，Review 侧把学习进度装回口袋。三者通过 `NotebookEntry` JSON 导入/导出打通数据，不做实时同步。
+三个 host 都是独立完整产品，**互不依赖**——两个采集侧任一停更另一个独立运转，Review 侧把学习进度装回口袋。三者都支持 `NotebookEntry` JSON 导入/导出；桌面端与 Review PWA 还可一次配对，通过只存短时密文的端到端加密接力同步笔记和复习进度。插件端继续以 JSON 作为稳定互通路径。
 
 学习卡片默认叠加参考词典弱标签：JLPT（N5–N1）、CEFR-J（A1–C2）、中文外语考试大纲（高考 / CET-4 / CET-6 / 考研）+ IELTS / TOEFL 社区参考弱标签（v1.1 一档色调更淡，明示非官方）。参考词典 CDN 与 host 完全独立。
 
@@ -24,6 +24,16 @@ LyricLens 是「一个产品，三个 host」（v1.0），本仓库是 host 1（
   <img src="screenshots/lyric-ncm.png" alt="网易云客户端中跟随歌词显示学习卡片（Aimer - After Rain）" width="49%" />
   <img src="screenshots/lyric-amll.png" alt="AMLL 沉浸式歌词模式下的学习卡片（深色主题）" width="49%" />
 </p>
+
+## 三分钟演示
+
+不安装网易云、不填写 API Key 也能先走通确定性的 UI 路径：
+
+```powershell
+start docs\demos\ui-demo-v2.html
+```
+
+在 demo 中切换中/日/英样例、播放状态和明暗主题，再打开设置查看完整配置面。真实链路则从 [v1.0.0 Release](https://github.com/yoruuuchan/LyricLens/releases/latest) 下载固定文件名 `LyricLens.plugin`，安装后播放一首英文或日文歌，配置 OpenAI 兼容 endpoint，即可验证「歌词捕获 → 学习卡片 → 加星入笔记本 → 导出 JSON」闭环。
 
 ## 安装
 
@@ -173,7 +183,7 @@ location.reload();
 npm test
 ```
 
-测试覆盖语言检测、歌词预处理、缓存 key、LLM JSON 容错解析和播放时间同步等纯逻辑模块。
+测试覆盖语言检测、歌词预处理、缓存 key、LLM JSON 容错解析、播放时间同步、插件打包和跨 host `NotebookEntry` 对拍。
 
 ## License
 

@@ -143,7 +143,21 @@ test("validateEntry accepts a complete entry and rejects each broken field", () 
     );
     assert.match(
       Notebook.validateEntry(makeEntry({ card: makeCard({ points: [{ text: "x" }] }) })),
-      /lacks type/
+      /safe identifier/
+    );
+    assert.match(
+      Notebook.validateEntry(makeEntry({
+        card: makeCard({
+          points: [{ type: 'vocabulary" onmouseover="alert(1)"', text: "x" }]
+        })
+      })),
+      /safe identifier/
+    );
+    assert.equal(
+      Notebook.validateEntry(makeEntry({
+        card: makeCard({ points: [{ type: "future-kind", text: "x" }] })
+      })),
+      null
     );
   } finally {
     restore();

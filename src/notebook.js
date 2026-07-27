@@ -41,6 +41,7 @@
     tone: "语感",
     general: "补充"
   };
+  const POINT_TYPE_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
   // Desktop's uuid::Uuid::parse_str is version-agnostic; matching the
   // standard hyphenated shape (what both hosts generate) keeps the two
@@ -106,7 +107,9 @@
     if (!Array.isArray(card.points)) return "card.points is not an array";
     for (const p of card.points) {
       if (!p || typeof p !== "object") return "card.points contains a non-object";
-      if (typeof p.type !== "string" || !p.type) return "card.points entry lacks type";
+      if (typeof p.type !== "string" || !POINT_TYPE_RE.test(p.type)) {
+        return `card.points type is not a safe identifier: ${JSON.stringify(p.type)}`;
+      }
       if (typeof p.text !== "string") return "card.points entry lacks text";
       if (p.surface !== undefined && p.surface !== null && typeof p.surface !== "string") {
         return "card.points surface is not a string";

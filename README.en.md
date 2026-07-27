@@ -14,7 +14,7 @@ LyricLens is one product with three independent hosts (v1.0). This repo is host 
 | **Desktop (capture)** | [`lyriclens-desktop`](https://github.com/yoruuuchan/lyriclens-desktop) | standalone Windows app | runs on SMTC + LRCLIB, no BetterNCM dependency |
 | **Review PWA** | [`lyriclens-review`](https://github.com/yoruuuchan/lyriclens-review) · [launch](https://lyriclens-review.yoru-and-akari.dev) | mobile browser (installable to home screen) | rate + revise saved notebook entries on the phone, Anki export |
 
-All three hosts are complete, independent products. **If either capture host stops being maintained, the other keeps the product alive; the Review PWA carries learning progress off the desktop into pocket-friendly review.** They share schema via `NotebookEntry` JSON import/export — no live sync.
+All three hosts are complete, independent products. **If either capture host stops being maintained, the other keeps the product alive; the Review PWA carries learning progress off the desktop into pocket-friendly review.** Every host supports `NotebookEntry` JSON import/export. Desktop and Review can additionally pair once and exchange notebooks and review progress through an end-to-end encrypted relay that stores only short-lived ciphertext; the plugin keeps JSON as its stable interop path.
 
 Learning cards optionally overlay reference-dictionary badges: JLPT (N5–N1), CEFR-J (A1–C2), Chinese English-exam syllabi (Gaokao / CET-4 / CET-6 / Kaoyan) + IELTS / TOEFL community weak labels (v1.1 renders these one shade softer to signal "not official"). The dictionary CDN is deployed independently of any host.
 
@@ -32,12 +32,22 @@ Learning cards optionally overlay reference-dictionary badges: JLPT (N5–N1), C
   <img src="screenshots/settings.png" alt="Settings panel: AI Service (OpenAI-compatible endpoint, API key, model)" width="55%" />
 </p>
 
+## Three-minute demo
+
+The deterministic UI path needs neither NetEase Cloud Music nor an API key:
+
+```powershell
+start docs\demos\ui-demo-v2.html
+```
+
+Switch between the Chinese/Japanese/English samples, playback states, themes, and the complete settings surface. For the real path, download the fixed-name `LyricLens.plugin` asset from the [v1.0.0 release](https://github.com/yoruuuchan/LyricLens/releases/latest), install it, play an English or Japanese track, and configure an OpenAI-compatible endpoint to verify lyrics capture → learning card → star-to-notebook → JSON export.
+
 ## Install
 
 ### Recommended: from a GitHub Release
 
 1. Quit NetEase Cloud Music.
-2. Grab the latest `LyricLens-x.y.z.plugin` from the [Releases](https://github.com/yoruuuchan/LyricLens/releases) page.
+2. Grab the latest `LyricLens.plugin` from the [Releases](https://github.com/yoruuuchan/LyricLens/releases) page.
 3. Drag the `.plugin` file into BetterNCM's plugin manager, or unzip it into `plugins/lyriclens/` under your BetterNCM plugins directory.
 4. Restart NCM and enable LyricLens from BetterNCM's plugin list.
 
@@ -172,7 +182,7 @@ A collapsible "Diagnostics" entry also appears inside the overlay, showing curre
 npm test
 ```
 
-The test suite covers pure-logic modules: language detection, lyric preprocessing, cache keys, tolerant LLM JSON parsing, and playback-time sync.
+The test suite covers language detection, lyric preprocessing, cache keys, tolerant LLM JSON parsing, playback-time sync, plugin packaging, and cross-host `NotebookEntry` conformance.
 
 ## License
 
