@@ -2,21 +2,32 @@
 
 [中文](README.md) · [English](README.en.md)
 
-Listen to a song, turn its lyrics into language-learning cards as you go. NetEase Cloud Music plugin, standalone desktop app, and a mobile review PWA — three entries, one notebook. This repo is one of them: the BetterNCM plugin that runs inside NCM, reads the current lyrics, calls the OpenAI-compatible Chat Completions endpoint you configured, and renders the resulting learning card inline with the lyric scroll.
+Listen to a song and turn its lyrics into language-learning cards as you go.
+
+LyricLens has three entry points: a NetEase Cloud Music plugin, a standalone desktop app, and a mobile review PWA. All three share one notebook. This repo is the plugin. It runs inside NetEase Cloud Music (NCM) through BetterNCM, reads the current lyrics, calls the OpenAI-compatible Chat Completions endpoint you configured, and shows the learning card inline as the lyrics scroll.
 
 ## Three hosts, one product
 
-LyricLens is one product with three independent hosts (v1.0). This repo is host 1 (the BetterNCM plugin):
+LyricLens v1.0 is one product with three independent hosts. This repo is host 1, the BetterNCM plugin:
 
 | Host | Repository | Where it lives | Role |
 |---|---|---|---|
-| **Plugin (capture)** | this repo | NetEase Cloud Music client + BetterNCM | reads NCM lyrics live, generates LLM learning cards, star-to-save |
-| **Desktop (capture)** | [`lyriclens-desktop`](https://github.com/yoruuuchan/lyriclens-desktop) | standalone Windows app | runs on SMTC + LRCLIB, no BetterNCM dependency |
-| **Review PWA** | [`lyriclens-review`](https://github.com/yoruuuchan/lyriclens-review) · [launch](https://lyriclens-review.yoru-and-akari.dev) | mobile browser (installable to home screen) | rate + revise saved notebook entries on the phone, Anki export |
+| Plugin (capture) | this repo | NetEase Cloud Music client + BetterNCM | reads NCM lyrics live, generates LLM learning cards, star-to-save |
+| Desktop (capture) | [`lyriclens-desktop`](https://github.com/yoruuuchan/lyriclens-desktop) | standalone Windows app | runs on SMTC + LRCLIB, no BetterNCM dependency |
+| Review PWA | [`lyriclens-review`](https://github.com/yoruuuchan/lyriclens-review) · [launch](https://lyriclens-review.yoru-and-akari.dev) | mobile browser (installable to home screen) | rate + revise saved notebook entries on the phone, Anki export |
 
-All three hosts are complete, independent products. **If either capture host stops being maintained, the other keeps the product alive; the Review PWA carries learning progress off the desktop into pocket-friendly review.** Every host supports `NotebookEntry` JSON import/export. Desktop and Review can additionally pair once and exchange notebooks and review progress through an end-to-end encrypted relay that stores only short-lived ciphertext; the plugin keeps JSON as its stable interop path.
+All three hosts are complete, independent products. If either capture host stops being maintained, the other keeps the product alive. The Review PWA takes your learning progress off the desktop and into your pocket.
 
-Learning cards optionally overlay reference-dictionary badges: JLPT (N5–N1), CEFR-J (A1–C2), Chinese English-exam syllabi (Gaokao / CET-4 / CET-6 / Kaoyan) + IELTS / TOEFL community weak labels (v1.1 renders these one shade softer to signal "not official"). The dictionary CDN is deployed independently of any host.
+Every host supports `NotebookEntry` JSON import/export. Desktop and Review can also pair once, then exchange notebooks and review progress through an end-to-end encrypted relay that stores only short-lived ciphertext. The plugin keeps JSON as its stable interop path.
+
+Learning cards optionally overlay reference-dictionary badges:
+
+- JLPT (N5–N1)
+- CEFR-J (A1–C2)
+- Chinese English-exam syllabi (Gaokao / CET-4 / CET-6 / Kaoyan)
+- IELTS / TOEFL community weak labels: v1.1 renders these one shade softer to signal "not official"
+
+The dictionary CDN is deployed independently of any host.
 
 ## Screenshots
 
@@ -34,22 +45,32 @@ Learning cards optionally overlay reference-dictionary badges: JLPT (N5–N1), C
 
 ## Three-minute demo
 
-The deterministic UI path needs neither NetEase Cloud Music nor an API key:
+You can walk through the UI with fixed sample data first. No NetEase Cloud Music, no API key:
 
 ```powershell
 start docs\demos\ui-demo-v2.html
 ```
 
-Switch between the Chinese/Japanese/English samples, playback states, themes, and the complete settings surface. For the real path, download the fixed-name `LyricLens.plugin` asset from the [v1.0.0 release](https://github.com/yoruuuchan/LyricLens/releases/latest), install it, play an English or Japanese track, and configure an OpenAI-compatible endpoint to verify lyrics capture → learning card → star-to-notebook → JSON export.
+In the demo, switch between the Chinese/Japanese/English samples, playback states and light/dark themes, then open settings to see every option.
+
+To try the real thing, download `LyricLens.plugin` from the [v1.0.0 release](https://github.com/yoruuuchan/LyricLens/releases/latest) (the asset name is fixed). Install it, play an English or Japanese track, and configure an OpenAI-compatible endpoint. That lets you verify the whole loop: lyrics capture → learning card → star-to-notebook → JSON export.
 
 ## Install
 
-### Recommended: from a GitHub Release
+### Recommended: from the plugin website
 
 1. Quit NetEase Cloud Music.
-2. Grab the latest `LyricLens.plugin` from the [Releases](https://github.com/yoruuuchan/LyricLens/releases) page.
+2. Open [lyriclens.yoru-and-akari.dev](https://lyriclens.yoru-and-akari.dev) and click 「下载最新版」 (Download latest) to get the `LyricLens.plugin` file.
 3. Drag the `.plugin` file into BetterNCM's plugin manager, or unzip it into `plugins/lyriclens/` under your BetterNCM plugins directory.
 4. Restart NCM and enable LyricLens from BetterNCM's plugin list.
+
+### Already installed: one-click update inside the plugin
+
+Open the LyricLens overlay, click the gear button, go to the 关于 (About) tab, and click 「立即更新」 (Update now). Download, install and the restart prompt are all automatic, and you never have to leave NCM.
+
+### Alternative: from a GitHub Release
+
+If neither channel above works, download the latest `LyricLens.plugin` by hand from the [Releases](https://github.com/yoruuuchan/LyricLens/releases) page. The remaining steps are the same as above.
 
 ### From source (for developers)
 
@@ -58,7 +79,7 @@ Switch between the Chinese/Japanese/English samples, playback states, themes, an
 3. Make sure `manifest.json`, `main.js`, `src/`, and `styles/` are all present.
 4. Restart NCM and enable LyricLens from BetterNCM's plugin list.
 
-No build step is required — the source files are loaded as-is. To repackage the `.plugin`, run `npm run build`.
+There is no build step. The source files are loaded as-is. To repackage the `.plugin`, run `npm run build`.
 
 ## Configuration
 
@@ -66,12 +87,12 @@ The first time an English or Japanese song plays without an API configured, the 
 
 You'll need to fill in:
 
-- **API Endpoint** — full OpenAI-compatible Chat Completions URL, e.g. `https://api.openai.com/v1/chat/completions`
-- **API Key** — your provider's key
-- **Model Name** — model identifier
-- **Auto-decompose** — on by default
-- **Default overlay position**
-- **Overlay opacity**
+- API Endpoint: the full OpenAI-compatible Chat Completions URL, e.g. `https://api.openai.com/v1/chat/completions`
+- API Key: your provider's key
+- Model Name: the model identifier
+- Auto-decompose: on by default
+- Default overlay position
+- Overlay opacity
 
 The API key is written to BetterNCM's local config and mirrored to `localStorage` as an MVP fallback. It is never sent to the plugin author or any third-party server.
 
@@ -93,7 +114,7 @@ To view the logs:
 
 ### Diagnostics mode
 
-Diagnostics mode is off by default. To enable it for real-client verification, run in the Console:
+Diagnostics mode is off by default. To turn it on for real-client verification, run this in the Console:
 
 ```js
 localStorage.setItem("ll_debug", "true");
@@ -107,22 +128,22 @@ localStorage.removeItem("ll_debug");
 location.reload();
 ```
 
-When enabled, the Console emits messages with the prefix `[LyricLens:diagnostics]`, covering:
+When it's on, the Console prints messages with the prefix `[LyricLens:diagnostics]`, covering:
 
 - Presence, type, safely-truncated sample, and errors for BetterNCM / NCM key objects
 - Top-level structure of the lyric payload captured by `window.onProcessLyrics`
 - `PlayProgress` argument structure for the first 5 calls and then every 10 seconds
 - Parse / load / failure state for `styles/panel.css`
 
-A collapsible "Diagnostics" entry also appears inside the overlay, showing current `songId`, language detection, lyric source, card count, current card index, API state, last error, and CSS state.
+A collapsible "Diagnostics" entry also appears inside the overlay. It shows the current `songId`, language detection, lyric source, card count, current card index, API state, last error, and CSS state.
 
 ## Known limitations
 
-- The exact lyric-object fields BetterNCM/NCM expose still need confirmation on a real client; the plugin falls back through `window.currentLyrics`, `window.CPPLYRICS_INTERNALS?.currentLyrics`, `window.AMLL?.currentLyrics`, the `window.onProcessLyrics` wrapper, and finally `betterncm.ncm.getPlayingSong()`.
-- No manifest hijack — the plugin does not rewrite NCM/AMLL/CppLyrics's internal rendering.
+- The exact lyric-object fields BetterNCM/NCM expose still need confirming on a real client. The plugin falls back through `window.currentLyrics`, `window.CPPLYRICS_INTERNALS?.currentLyrics`, `window.AMLL?.currentLyrics`, the `window.onProcessLyrics` wrapper, and finally `betterncm.ncm.getPlayingSong()`.
+- No manifest hijack. The plugin does not rewrite NCM/AMLL/CppLyrics's internal rendering.
 - The in-memory cache only lasts for the current client session.
-- The MVP does not provide a native BetterNCM settings page; the gear-icon form is the only entry point.
-- Whether API requests work depends on the user-configured endpoint, the network, and CORS/`fetch` behavior in the client.
+- The MVP has no native BetterNCM settings page; the gear-icon form is the only entry point.
+- Whether API requests work depends on the endpoint you configure, the network, and CORS/`fetch` behavior in the client.
 
 ## Real-client verification template
 
@@ -182,7 +203,7 @@ A collapsible "Diagnostics" entry also appears inside the overlay, showing curre
 npm test
 ```
 
-The test suite covers language detection, lyric preprocessing, cache keys, tolerant LLM JSON parsing, playback-time sync, plugin packaging, and cross-host `NotebookEntry` conformance.
+The tests cover language detection, lyric preprocessing, cache keys, tolerant LLM JSON parsing, playback-time sync, plugin packaging, and cross-host `NotebookEntry` conformance.
 
 ## License
 
@@ -191,10 +212,10 @@ LyricLens is released under the [GNU Affero General Public License v3.0 or later
 In plain English:
 - You may use, modify, and redistribute LyricLens freely.
 - Any fork **or any network-accessible deployment** of LyricLens (or a derivative) must remain open-source under the same AGPL license.
-- AGPL was chosen deliberately over MIT/GPL: the project author retains the option to dual-license for commercial use. For a commercial license, contact via Issues.
+- AGPL was chosen deliberately over MIT/GPL: the project author keeps the option to dual-license for commercial use. For a commercial license, get in touch via Issues.
 
-Third-party assets (fonts, etc.) retain their own licenses — see [NOTICES.md](NOTICES.md).
+Third-party assets (fonts, etc.) keep their own licenses. See [NOTICES.md](NOTICES.md).
 
 ## Contributing
 
-PRs welcome. Add `Signed-off-by: Your Name <your@email>` to every commit message (`git commit -s` does this automatically) to certify that you are licensing your contribution under the project's terms — see the [Developer Certificate of Origin](https://developercertificate.org/).
+PRs welcome. Add `Signed-off-by: Your Name <your@email>` to every commit message (`git commit -s` does this automatically). It certifies that you are licensing your contribution under the project's terms; see the [Developer Certificate of Origin](https://developercertificate.org/).
